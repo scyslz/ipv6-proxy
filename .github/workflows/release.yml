@@ -1,0 +1,52 @@
+name: release-latest
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'ipv6-proxy/**'
+      - '.github/workflows/release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache-dependency-path: ipv6-proxy/go.mod
+
+      - name: Build
+        working-directory: ipv6-proxy
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o ipv6-proxy-linux-arm64 .
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ipv6-proxy-linux-amd64 .
+          ls -lh ipv6-proxy-linux-* config.json config-oci.json
+
+      - name: Tag latest
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git tag -f latest
+          git push -f origin latest
+
+      - name: Release latest
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: latest
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            ipv6-proxy/ipv6-proxy-linux-arm64
+            ipv6-proxy/ipv6-proxy-linux-amd64
+            ipv6-proxy/config.json
+            ipv6-proxy/config-oci.json

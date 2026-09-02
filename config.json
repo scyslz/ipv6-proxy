@@ -1,0 +1,14 @@
+{
+  "proxy_addr": "0.0.0.0:8080",
+  "api_addr": "[::]:9191",
+  "prefix": "2409:8a62:578:d600::/60",
+  "subnet_count": 4,
+  "health_interval_sec": 60,
+  "connect_timeout_sec": 5,
+  "max_retries": 5,
+  "selection_mode": "manual",
+  "source_mode": "pool",
+  "dummy_iface": "v6test0",
+  "dns_server": "2606:4700:4700::1111",
+  "test_target": "2606:4700:4700::1111"
+}
