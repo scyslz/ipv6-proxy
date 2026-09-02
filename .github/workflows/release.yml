@@ -25,7 +25,8 @@ jobs:
         run: |
           CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o ipv6-proxy-linux-arm64 .
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ipv6-proxy-linux-amd64 .
-          ls -lh ipv6-proxy-linux-* config.json config-oci.json
+          tar czf ipv6-proxy.tar.gz ipv6-proxy-linux-arm64 ipv6-proxy-linux-amd64 config.json config-oci.json README.md RESEARCH-OCI.md
+          ls -lh ipv6-proxy-linux-* ipv6-proxy.tar.gz config.json config-oci.json
 
       - name: Tag latest
         run: |
@@ -44,5 +45,6 @@ jobs:
           files: |
             ipv6-proxy-linux-arm64
             ipv6-proxy-linux-amd64
+            ipv6-proxy.tar.gz
             config.json
             config-oci.json
