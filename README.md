@@ -2,18 +2,6 @@
 
 轻量 Go 代理，一行命令让多个 IPv6 轮流出站。家庭 `PD` 与 `OCI` 双场景。
 
-## 文件
-```
-ipv6-proxy/
-├── main.go            # 入口
-├── internal/          # 拆分模块（config/pool/network/dns/proxy/api/oci）
-├── config.json        # 家庭 pool
-├── config-oci.json    # OCI（oci_prefix_length=112 单段 6万IP）
-├── go.mod
-└── README.md
-```
-调研见 `RESEARCH.md`（家庭）/`RESEARCH-OCI.md`（OCI 通俗版）。
-
 ## 编译
 ```bash
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o ipv6-proxy-arm64 .
