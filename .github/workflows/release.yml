@@ -44,9 +44,5 @@ jobs:
           prerelease: false
           generate_release_notes: true
           files: |
-            ipv6-proxy-linux-arm64
-            ipv6-proxy-linux-amd64
             ipv6-proxy-arm64.tar.gz
             ipv6-proxy-amd64.tar.gz
-            config.json
-            config-oci.json
