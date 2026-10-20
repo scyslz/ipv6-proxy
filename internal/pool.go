@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -38,7 +39,7 @@ type IPv6Addr struct {
 	LastCheck    time.Time      `json:"last_check"`
 	AddedAt      time.Time      `json:"added_at"`
 	AddressAdded bool           `json:"address_added"`
-	RouteCheck   RouteCheckInfo  `json:"route_check"`
+	RouteCheck   RouteCheckInfo `json:"route_check"`
 	PolicyRouted bool           `json:"policy_routed"`
 	Bind         bool           `json:"bind"`
 	TCP          StageInfo      `json:"tcp"`
@@ -54,37 +55,56 @@ type IPv6Addr struct {
 	RealRequestCount    int        `json:"real_request_count"`
 	SuccessCount        int        `json:"success_count"`
 	FailureCount        int        `json:"failure_count"`
-	ConsecutiveFailures int       `json:"consecutive_failures"`
+	ConsecutiveFailures int        `json:"consecutive_failures"`
 	LastSuccess         *time.Time `json:"last_success"`
 	LastFailure         *time.Time `json:"last_failure"`
 	LastRecheck         time.Time  `json:"last_recheck"`
 	State               string     `json:"state"`
 }
 
+// Policy routing is per pool. A hot reload can switch the egress interface
+// (for example to a second VNIC with a different /64), so each pool gets its
+// own table id. Reusing table 100 would leave the new pool with a stale
+// default route pointing at the old interface.
+var tableCounter uint32 = 99
+
+func nextTableID() int {
+	return 100 + int(atomic.AddUint32(&tableCounter, 1)-1)%100
+}
+
+func nextTableIDExcept(exclude int) int {
+	for i := 0; i < 100; i++ {
+		if id := nextTableID(); id != exclude {
+			return id
+		}
+	}
+	return exclude
+}
+
 type IPv6Pool struct {
-	mu          sync.RWMutex
-	addrs       map[string]*IPv6Addr
-	prefix      *net.IPNet
-	dummyIface  string
-	sourceIface string
-	wanIface    string
-	wanGateway  string
-	tableID     int
-	rulePrio    int
+	mu            sync.RWMutex
+	addrs         map[string]*IPv6Addr
+	prefix        *net.IPNet
+	dummyIface    string
+	sourceIface   string
+	wanIface      string
+	wanGateway    string
+	tableID       int
+	rulePrio      int
 	selectionMode string
-	sourceMode  string
-	dnsServer   string
-	testTarget  string
+	sourceMode    string
+	dnsServer     string
+	testTarget    string
 	// dnsServerRaw/testTargetRaw hold the original configured values, which may
 	// be a domain. When they are domains, dnsServer/testTarget carry the
 	// resolved AAAA and are periodically refreshed (see startInfraDNSRefresh).
-	dnsServerRaw string
+	dnsServerRaw  string
 	testTargetRaw string
 	// hosts maps a hostname to either a literal IPv6 or an alias domain. When
 	// the value is a domain, it is resolved (AAAA) at request time — see
 	// resolveHost. Keys are normalized (lowercased, :port stripped).
-	hosts       map[string]string
-	rrIndex     int
+	hosts        map[string]string
+	rrIndex      uint64 // atomic round-robin cursor
 	dummyCreated bool
 
 	// dnsCache caches AAAA resolutions for client target domains (and is
@@ -98,7 +118,7 @@ type IPv6Pool struct {
 	pinnedIP string
 
 	// SLAAC source-mode state
-	slaacPrefix            *net.IPNet
+	slaacPrefix           *net.IPNet
 	slaacWANIP            net.IP
 	failureThreshold      int
 	recheckFailedInterval time.Duration
@@ -108,7 +128,13 @@ type IPv6Pool struct {
 	ociClient       *OciClient
 	ociCompartment  string
 	ociVnicID       string
+	ociPrefixID     string
 	ociPrefixLength int
+
+	// hostEgressIP is the explicitly pinned host egress source. It is kept in
+	// the stale-address plan so cleanup never deletes an address the host
+	// default route still depends on.
+	hostEgressIP string
 }
 
 func NewIPv6Pool(prefixStr, wanIface, dummyIface, selectionMode, dnsServer, testTarget string, createDummy bool) (*IPv6Pool, error) {
@@ -131,7 +157,8 @@ func NewIPv6Pool(prefixStr, wanIface, dummyIface, selectionMode, dnsServer, test
 		srcIface = wanIface
 	}
 	gw := detectGateway(wanIface)
-	log.Printf("IPv6 pool ready (dummyCreated=%v, sourceInterface=%s), WAN=%s gateway=%q", created, srcIface, wanIface, gw)
+	tableID := nextTableID()
+	log.Printf("IPv6 pool ready (dummyCreated=%v, sourceInterface=%s), WAN=%s gateway=%q table=%d", created, srcIface, wanIface, gw, tableID)
 
 	// Allow dns_server / test_target to be configured as domains: resolve them
 	// to AAAA at startup and cache the result. The raw value is retained so a
@@ -163,8 +190,8 @@ func NewIPv6Pool(prefixStr, wanIface, dummyIface, selectionMode, dnsServer, test
 		sourceIface:   srcIface,
 		wanIface:      wanIface,
 		wanGateway:    gw,
-		tableID:       100,
-		rulePrio:      1000,
+		tableID:       tableID,
+		rulePrio:      1000 + (tableID-100)*100,
 		selectionMode: selectionMode,
 		dnsServer:     resolvedDNS,
 		testTarget:    resolvedTgt,
@@ -262,6 +289,22 @@ func (p *IPv6Pool) GenerateAddresses(count int) []net.IP {
 		subnetCount = 1
 	}
 
+	// A prefix longer than /64 is not a PD: there is no /64 subnet to
+	// enumerate inside it, so pick random hosts within the delegation instead.
+	// (Enumerating byte 7 there would generate addresses outside the prefix.)
+	if prefixLen > 64 {
+		seen := map[string]bool{}
+		for len(ips) < subnetCount {
+			ip := randomIPInPrefix(p.prefix)
+			if seen[ip.String()] {
+				continue
+			}
+			seen[ip.String()] = true
+			ips = append(ips, ip)
+		}
+		return ips
+	}
+
 	for i := 0; i < subnetCount; i++ {
 		ip := make(net.IP, 16)
 		copy(ip, p.prefix.IP.To16())
@@ -320,23 +363,27 @@ func (p *IPv6Pool) AddAddress(ip net.IP, subnet string) error {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		if !strings.Contains(string(out), "File exists") {
 			addrAdded = false
-		p.mu.Lock()
-		p.addrs[ipStr] = &IPv6Addr{
-			IP:           ip.String(),
-			Subnet:       subnet,
-			Interface:    p.sourceIface,
-			Status:       "dead",
-			AddedAt:      time.Now(),
-			AddressAdded: false,
-			FailureStage: "address_add_failed",
-			SourceMode:   p.sourceMode,
-			Prefix:       p.prefix.String(),
-			Configured:   true,
-		}
+			p.mu.Lock()
+			p.addrs[ipStr] = &IPv6Addr{
+				IP:           ip.String(),
+				Subnet:       subnet,
+				Interface:    p.sourceIface,
+				Status:       "dead",
+				AddedAt:      time.Now(),
+				AddressAdded: false,
+				FailureStage: "address_add_failed",
+				SourceMode:   p.sourceMode,
+				Prefix:       p.prefix.String(),
+				Configured:   true,
+			}
 			p.mu.Unlock()
 			return fmt.Errorf("ip addr add failed: %s: %w", strings.TrimSpace(string(out)), err)
 		}
-		log.Printf("[POOL] %s already exists on %s, taking ownership", ipStr, p.sourceIface)
+		// The address already existed (e.g. an OCI-managed /128 or a leftover
+		// from a previous run). Track it for selection, but do not claim
+		// ownership: provider-managed addresses must survive shutdown/reload.
+		addrAdded = false
+		log.Printf("[POOL] %s already exists on %s, tracking without owning it", ipStr, p.sourceIface)
 	}
 
 	p.mu.Lock()
@@ -405,12 +452,12 @@ func (p *IPv6Pool) releaseEphemeral(ipStr string) {
 
 func (p *IPv6Pool) SelectIPv6(clientHint string) (string, error) {
 	p.mu.RLock()
-	defer p.mu.RUnlock()
-
 	if clientHint != "" {
 		if addr, ok := p.addrs[clientHint]; ok && addr.Status != "failed" && addr.Status != "dead" {
+			p.mu.RUnlock()
 			return clientHint, nil
 		}
+		p.mu.RUnlock()
 		return "", fmt.Errorf("requested IPv6 %s not available", clientHint)
 	}
 
@@ -423,19 +470,26 @@ func (p *IPv6Pool) SelectIPv6(clientHint string) (string, error) {
 		}
 		selectable = append(selectable, ip)
 	}
+	p.mu.RUnlock()
+
 	if len(selectable) == 0 {
 		return "", fmt.Errorf("no available IPv6 addresses in pool")
 	}
+	// The selection mode can be changed at runtime, so read it under cfgMu
+	// rather than relying on the (immutable) startup config.
+	mode := p.GetSelectionMode()
 
-	switch p.selectionMode {
+	switch mode {
 	case "random":
 		return selectable[rand.Intn(len(selectable))], nil
 	case "manual":
 		// No automatic rotation: keep the pinned IP until the API switches it.
 		return p.manualSelect(selectable)
 	default:
-		idx := p.rrIndex % len(selectable)
-		p.rrIndex++
+		idx := int(atomic.AddUint64(&p.rrIndex, 1)-1) % len(selectable)
+		if idx < 0 {
+			idx += len(selectable)
+		}
 		return selectable[idx], nil
 	}
 }
@@ -526,6 +580,13 @@ func (p *IPv6Pool) SetSelectionMode(mode string) error {
 	default:
 		return fmt.Errorf("invalid selection_mode %q (want round-robin|random|manual)", mode)
 	}
+}
+
+// GetSelectionMode returns the current selection algorithm.
+func (p *IPv6Pool) GetSelectionMode() string {
+	p.cfgMu.RLock()
+	defer p.cfgMu.RUnlock()
+	return p.selectionMode
 }
 
 func (p *IPv6Pool) ListAddresses() map[string]*IPv6Addr {
@@ -657,30 +718,84 @@ func checkRoute(testIP, targetIP, wanIface string) (iface, src string, ok bool, 
 }
 
 func (p *IPv6Pool) setupPolicyRoute(testIP string) error {
-	prio := p.rulePrio
-	p.rulePrio++
-	ruleCmd := exec.Command("ip", "-6", "rule", "add", "from", testIP+"/128",
-		"table", strconv.Itoa(p.tableID), "priority", strconv.Itoa(prio))
-	if out, err := ruleCmd.CombinedOutput(); err != nil {
-		if !strings.Contains(string(out), "File exists") {
-			return fmt.Errorf("rule add: %s: %w", strings.TrimSpace(string(out)), err)
+	p.mu.Lock()
+	tableID := p.tableID
+	wanIface := p.wanIface
+	wanGateway := p.wanGateway
+	p.mu.Unlock()
+	if !policyRuleExists(testIP, tableID) {
+		p.mu.Lock()
+		prio := p.rulePrio
+		p.rulePrio++
+		p.mu.Unlock()
+		ruleCmd := exec.Command("ip", "-6", "rule", "add", "from", testIP+"/128",
+			"table", strconv.Itoa(tableID), "priority", strconv.Itoa(prio))
+		if out, err := ruleCmd.CombinedOutput(); err != nil {
+			if !strings.Contains(string(out), "File exists") {
+				return fmt.Errorf("rule add: %s: %w", strings.TrimSpace(string(out)), err)
+			}
 		}
 	}
 	var routeCmd *exec.Cmd
-	if p.wanGateway != "" {
-		routeCmd = exec.Command("ip", "-6", "route", "add", "default", "via", p.wanGateway,
-			"dev", p.wanIface, "table", strconv.Itoa(p.tableID))
+	if wanGateway != "" {
+		routeCmd = exec.Command("ip", "-6", "route", "add", "default", "via", wanGateway,
+			"dev", wanIface, "table", strconv.Itoa(tableID))
 	} else {
-		routeCmd = exec.Command("ip", "-6", "route", "add", "default", "dev", p.wanIface,
-			"table", strconv.Itoa(p.tableID))
+		routeCmd = exec.Command("ip", "-6", "route", "add", "default", "dev", wanIface,
+			"table", strconv.Itoa(tableID))
 	}
 	if out, err := routeCmd.CombinedOutput(); err != nil {
 		if !strings.Contains(string(out), "File exists") {
 			return fmt.Errorf("route add: %s: %w", strings.TrimSpace(string(out)), err)
 		}
 	}
-	log.Printf("[ROUTE] policy route for %s -> table %d (gw=%q)", testIP, p.tableID, p.wanGateway)
+	log.Printf("[ROUTE] policy route for %s -> table %d (gw=%q)", testIP, tableID, wanGateway)
 	return nil
+}
+
+// policyRuleExists reports whether a source-specific rule already points the
+// address at the pool table, regardless of its priority.
+func policyRuleExists(ip string, tableID int) bool {
+	out, err := exec.Command("ip", "-6", "rule", "show").Output()
+	if err != nil {
+		return false
+	}
+	wantFrom := "from " + ip
+	wantTable := "lookup " + strconv.Itoa(tableID)
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.Contains(line, wantFrom) && strings.Contains(line, wantTable) {
+			return true
+		}
+	}
+	return false
+}
+
+// EnsurePolicyRoutes pins every pool address to the active pool's VNIC before
+// the host egress policy changes the main IPv6 default route. Without this a
+// host-level default via another VNIC could steal proxy traffic from addresses
+// that only worked through the main table.
+func (p *IPv6Pool) EnsurePolicyRoutes() error {
+	p.mu.RLock()
+	ips := make([]string, 0, len(p.addrs))
+	for ip := range p.addrs {
+		ips = append(ips, ip)
+	}
+	p.mu.RUnlock()
+	var firstErr error
+	for _, ip := range ips {
+		if err := p.setupPolicyRoute(ip); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		p.mu.Lock()
+		if a := p.addrs[ip]; a != nil {
+			a.PolicyRouted = true
+		}
+		p.mu.Unlock()
+	}
+	return firstErr
 }
 
 func testBind(localIP net.IP) error {
@@ -852,7 +967,10 @@ func (p *IPv6Pool) recordRequest(ipStr string, success bool) {
 		addr.ConsecutiveFailures++
 		now := time.Now()
 		addr.LastFailure = &now
-		if p.failureThreshold > 0 && addr.ConsecutiveFailures >= p.failureThreshold {
+		p.cfgMu.RLock()
+		threshold := p.failureThreshold
+		p.cfgMu.RUnlock()
+		if threshold > 0 && addr.ConsecutiveFailures >= threshold {
 			addr.Status = "failed"
 			addr.State = "failed"
 			log.Printf("[SLAAC] %s marked FAILED after %d consecutive failures", ipStr, addr.ConsecutiveFailures)
@@ -874,6 +992,8 @@ func (p *IPv6Pool) addrStatus(ipStr string) string {
 }
 
 func (p *IPv6Pool) slaacPrefixString() string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
 	if p.slaacPrefix == nil {
 		return ""
 	}
@@ -881,6 +1001,8 @@ func (p *IPv6Pool) slaacPrefixString() string {
 }
 
 func (p *IPv6Pool) slaacWANIPString() string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
 	if p.slaacWANIP == nil {
 		return ""
 	}
@@ -910,7 +1032,10 @@ func (p *IPv6Pool) healthCheckSLAAC(timeout time.Duration) {
 		p.mu.RLock()
 		lr := p.addrs[ipStr].LastRecheck
 		p.mu.RUnlock()
-		if now.Sub(lr) < p.recheckFailedInterval {
+		p.cfgMu.RLock()
+		recheck := p.recheckFailedInterval
+		p.cfgMu.RUnlock()
+		if now.Sub(lr) < recheck {
 			continue
 		}
 		p.recordRequest(ipStr, p.probeSLAAC(ipStr, timeout))
@@ -950,50 +1075,233 @@ func (p *IPv6Pool) probeSLAAC(ipStr string, timeout time.Duration) bool {
 }
 
 func (p *IPv6Pool) CleanupAddedAddresses() {
+	p.TeardownExcept(nil, false)
+	exec.Command("ip", "-6", "route", "flush", "table", strconv.Itoa(p.tableID)).Run()
+}
+
+// TeardownExcept removes pool-managed /128s that are not present in keep.
+// keepDummy=false also removes the dummy interface when this pool created it.
+// It is used when hot-swapping pools so addresses shared with the new pool are
+// not deleted from the kernel.
+func (p *IPv6Pool) TeardownExcept(keep map[string]bool, keepDummy bool) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	type victim struct {
+		ip     string
+		iface  string
+		policy bool
+	}
+	var victims []victim
 	for ipStr, addr := range p.addrs {
-		exec.Command("ip", "-6", "addr", "del", ipStr+"/128", "dev", p.sourceIface).Run()
-		if addr.PolicyRouted {
-			exec.Command("ip", "-6", "rule", "del", "from", ipStr+"/128",
+		if keep[ipStr] {
+			continue
+		}
+		// Never delete the address the host's own IPv6 default route uses as
+		// its source during a hot swap; that would blackhole host traffic.
+		// keep==nil means teardown (shutdown / failed build), where the route is
+		// going away anyway, so the address must not linger on the interface.
+		if keep != nil && p.hostEgressIP != "" && ipStr == p.hostEgressIP {
+			continue
+		}
+		// Only remove addresses this process added to the kernel. OCI-managed
+		// /128s that already existed (dynamic or provider-assigned) are left
+		// alone; the OCI control plane owns their lifetime.
+		if !addr.AddressAdded && !(p.dummyCreated && p.sourceIface == p.dummyIface) {
+			continue
+		}
+		victims = append(victims, victim{ip: ipStr, iface: p.sourceIface, policy: addr.PolicyRouted})
+	}
+	dummy := p.dummyIface
+	dummyCreated := p.dummyCreated
+	p.mu.Unlock()
+
+	for _, v := range victims {
+		exec.Command("ip", "-6", "addr", "del", v.ip+"/128", "dev", v.iface).Run()
+		if v.policy {
+			exec.Command("ip", "-6", "rule", "del", "from", v.ip+"/128",
 				"table", strconv.Itoa(p.tableID)).Run()
 		}
-		log.Printf("[CLEANUP] Removed %s from %s", ipStr, p.sourceIface)
-		delete(p.addrs, ipStr)
+		log.Printf("[CLEANUP] Removed %s from %s", v.ip, v.iface)
 	}
-	exec.Command("ip", "-6", "route", "flush", "table", strconv.Itoa(p.tableID)).Run()
-	if p.dummyCreated {
-		if err := removeDummyInterface(p.dummyIface); err != nil {
-			log.Printf("[CLEANUP] failed to remove dummy %s: %v", p.dummyIface, err)
+	if dummyCreated && !keepDummy {
+		if err := removeDummyInterface(dummy); err != nil {
+			log.Printf("[CLEANUP] failed to remove dummy %s: %v", dummy, err)
 		} else {
-			log.Printf("[CLEANUP] removed dummy interface %s", p.dummyIface)
+			log.Printf("[CLEANUP] removed dummy interface %s", dummy)
 		}
 	}
+	// Each pool owns a unique policy table. Flush it so a later pool that
+	// switches to another interface cannot inherit a stale default route.
+	exec.Command("ip", "-6", "route", "flush", "table", strconv.Itoa(p.tableID)).Run()
 }
+
+// WANIface returns the WAN interface this pool was built for.
+func (p *IPv6Pool) WANIface() string { return p.wanIface }
+
+// SetWanGateway overrides the detected link-local router. OCI instance
+// metadata provides the virtual router address for secondary VNICs even before
+// Router Advertisement installs a default route on the new interface.
+func (p *IPv6Pool) SetWanGateway(gw string) {
+	p.mu.Lock()
+	p.wanGateway = strings.TrimSpace(gw)
+	p.mu.Unlock()
+}
+
+// SetPolicyTable changes the table id of a pool that has not published any
+// policy routes yet. It is used to avoid reusing the live pool's table while a
+// hot-reload replacement is being built.
+func (p *IPv6Pool) SetPolicyTable(id int) {
+	p.tableID = id
+	p.rulePrio = 1000 + (id-100)*100
+}
+
+// SourceIface returns the interface pool addresses are placed on.
+func (p *IPv6Pool) SourceIface() string { return p.sourceIface }
+
+// ActiveVnicID returns the OCI VNIC backing the live pool, if any.
+func (p *IPv6Pool) ActiveVnicID() string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.ociVnicID
+}
+
+// Gateway returns the link-local router used for policy routes.
+func (p *IPv6Pool) Gateway() string { return p.wanGateway }
+
+// Prefix returns the pool's current prefix string (empty when unknown).
+func (p *IPv6Pool) Prefix() string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if p.prefix == nil {
+		return ""
+	}
+	return p.prefix.String()
+}
+
+// AddressSet returns the pool's addresses as a set, for hot-reload teardown.
+func (p *IPv6Pool) AddressSet() map[string]bool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	out := make(map[string]bool, len(p.addrs))
+	for ip := range p.addrs {
+		out[ip] = true
+	}
+	return out
+}
+
+// RefreshInfraDNS re-resolves domain-valued dns_server / test_target. It is
+// called by the main health loop so a hot-reloaded pool keeps its AAAA cache
+// fresh.
+func (p *IPv6Pool) RefreshInfraDNS() { p.refreshInfraDNS() }
+
 // SubnetOf is exported wrapper for subnetOf.
 func SubnetOf(ip net.IP) string { return subnetOf(ip) }
 
 // Exported helpers for main to configure pool without accessing unexported fields.
-func (p *IPv6Pool) SetSourceMode(m string) { p.sourceMode = m }
-func (p *IPv6Pool) GetSourceMode() string { p.mu.RLock(); defer p.mu.RUnlock(); return p.sourceMode }
-func (p *IPv6Pool) AddHost(k, v string) { p.mu.Lock(); defer p.mu.Unlock(); p.hosts[k] = v }
-func (p *IPv6Pool) HostCount() int { p.mu.RLock(); defer p.mu.RUnlock(); return len(p.hosts) }
-func (p *IPv6Pool) SetSlaacInfo(wanIP net.IP, prefix *net.IPNet) {
-    p.mu.Lock()
-    defer p.mu.Unlock()
-    p.slaacWANIP = wanIP
-    p.slaacPrefix = prefix
-    p.prefix = prefix
+func (p *IPv6Pool) SetSourceMode(m string) {
+	p.mu.Lock()
+	p.sourceMode = m
+	p.mu.Unlock()
 }
-func (p *IPv6Pool) SetFailureThreshold(v int) { p.failureThreshold = v }
-func (p *IPv6Pool) SetRecheckFailedInterval(d time.Duration) { p.recheckFailedInterval = d }
-func (p *IPv6Pool) SetSlaacPoolSize(n int) { p.slaacPoolSize = n }
+func (p *IPv6Pool) GetSourceMode() string { p.mu.RLock(); defer p.mu.RUnlock(); return p.sourceMode }
+func (p *IPv6Pool) AddHost(k, v string)   { p.mu.Lock(); defer p.mu.Unlock(); p.hosts[k] = v }
+func (p *IPv6Pool) HostCount() int        { p.mu.RLock(); defer p.mu.RUnlock(); return len(p.hosts) }
 
-func (p *IPv6Pool) StartInfraDNSRefresh(ctx context.Context, interval time.Duration) { p.startInfraDNSRefresh(ctx, interval) }
+// ListHosts returns a copy of the static host mappings.
+func (p *IPv6Pool) ListHosts() map[string]string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	out := make(map[string]string, len(p.hosts))
+	for k, v := range p.hosts {
+		out[k] = v
+	}
+	return out
+}
+
+// RemoveHost deletes a static host mapping and reports whether it existed.
+func (p *IPv6Pool) RemoveHost(k string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if _, ok := p.hosts[k]; !ok {
+		return false
+	}
+	delete(p.hosts, k)
+	return true
+}
+
+// SetHosts atomically replaces the static host mapping table.
+func (p *IPv6Pool) SetHosts(hosts map[string]string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	next := make(map[string]string, len(hosts))
+	for k, v := range hosts {
+		next[normalizeHost(k)] = v
+	}
+	p.hosts = next
+}
+
+// SetInfraDNS replaces dns_server / test_target at runtime. Both values may be
+// literal IPv6 addresses or domains; domains are resolved immediately (and
+// refreshed periodically by startInfraDNSRefresh).
+func (p *IPv6Pool) SetInfraDNS(dnsServer, testTarget string) error {
+	dnsServer = strings.TrimSpace(dnsServer)
+	testTarget = strings.TrimSpace(testTarget)
+	if dnsServer == "" || testTarget == "" {
+		return fmt.Errorf("dns_server and test_target must not be empty")
+	}
+	resolvedDNS := dnsServer
+	if !isIPv6Literal(dnsServer) {
+		ip, err := resolveAAAA(context.Background(), dnsServer, "")
+		if err != nil {
+			return fmt.Errorf("resolve dns_server %q: %w", dnsServer, err)
+		}
+		resolvedDNS = ip.String()
+	}
+	resolvedTgt := testTarget
+	if !isIPv6Literal(testTarget) {
+		ip, err := resolveAAAA(context.Background(), testTarget, resolvedDNS)
+		if err != nil {
+			return fmt.Errorf("resolve test_target %q: %w", testTarget, err)
+		}
+		resolvedTgt = ip.String()
+	}
+	p.cfgMu.Lock()
+	p.dnsServerRaw = dnsServer
+	p.testTargetRaw = testTarget
+	p.dnsServer = resolvedDNS
+	p.testTarget = resolvedTgt
+	p.cfgMu.Unlock()
+	log.Printf("[DNS] infra updated: dns_server=%s (%s) test_target=%s (%s)", dnsServer, resolvedDNS, testTarget, resolvedTgt)
+	return nil
+}
+func (p *IPv6Pool) SetSlaacInfo(wanIP net.IP, prefix *net.IPNet) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.slaacWANIP = wanIP
+	p.slaacPrefix = prefix
+	p.prefix = prefix
+}
+func (p *IPv6Pool) SetFailureThreshold(v int) {
+	p.cfgMu.Lock()
+	p.failureThreshold = v
+	p.cfgMu.Unlock()
+}
+func (p *IPv6Pool) SetRecheckFailedInterval(d time.Duration) {
+	p.cfgMu.Lock()
+	p.recheckFailedInterval = d
+	p.cfgMu.Unlock()
+}
+func (p *IPv6Pool) SetSlaacPoolSize(n int) { p.cfgMu.Lock(); p.slaacPoolSize = n; p.cfgMu.Unlock() }
+
+func (p *IPv6Pool) StartInfraDNSRefresh(ctx context.Context, interval time.Duration) {
+	p.startInfraDNSRefresh(ctx, interval)
+}
 
 func (p *IPv6Pool) HealthCheckSLAAC(timeout time.Duration) { p.healthCheckSLAAC(timeout) }
 
 func (p *IPv6Pool) ReconcileSLAAC() { p.reconcileSLAAC() }
 
-func (p *IPv6Pool) GetSlaacPoolSize() int { return p.slaacPoolSize }
-
+func (p *IPv6Pool) GetSlaacPoolSize() int {
+	p.cfgMu.RLock()
+	defer p.cfgMu.RUnlock()
+	return p.slaacPoolSize
+}

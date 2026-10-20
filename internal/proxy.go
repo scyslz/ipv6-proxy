@@ -19,13 +19,22 @@ import (
 
 type ProxyServer struct {
 	addr string
-	pool *IPv6Pool
-	cfg  *Config
+	rt   *Runtime
 }
 
 func NewProxyServer(addr string, pool *IPv6Pool, cfg *Config) *ProxyServer {
-	return &ProxyServer{addr: addr, pool: pool, cfg: cfg}
+	return NewProxyServerWithRuntime(addr, NewRuntime(pool, cfg))
 }
+
+func NewProxyServerWithRuntime(addr string, rt *Runtime) *ProxyServer {
+	return &ProxyServer{addr: addr, rt: rt}
+}
+
+func (s *ProxyServer) pool() *IPv6Pool { return s.rt.Pool() }
+func (s *ProxyServer) cfg() *Config    { return s.rt.Config() }
+
+// Addr returns the address this proxy was started with.
+func (s *ProxyServer) Addr() string { return s.addr }
 
 func (s *ProxyServer) ListenAndServe(ctx context.Context) error {
 	host, port, err := net.SplitHostPort(s.addr)
@@ -119,11 +128,11 @@ func (s *ProxyServer) handleConn(conn net.Conn) {
 // selectSource picks the source IPv6 for an outbound connection. In
 // "ephemeral" source mode it always mints a fresh address (so the ISP's
 // first-connection-only allowance applies to the real traffic).
-func (s *ProxyServer) selectSource(clientHint string) (ip string, err error) {
-	if s.pool.sourceMode == "ephemeral" {
-		return s.pool.acquireEphemeral()
+func (s *ProxyServer) selectSource(pool *IPv6Pool, clientHint string) (ip string, err error) {
+	if pool.GetSourceMode() == "ephemeral" {
+		return pool.acquireEphemeral()
 	}
-	return s.pool.SelectIPv6(clientHint)
+	return pool.SelectIPv6(clientHint)
 }
 
 // dialOut opens an outbound connection bound to a source IPv6 from the pool (or
@@ -141,8 +150,9 @@ const dnsDialTimeout = 5 * time.Second
 const defaultDNSServer = "2606:4700:4700::1111"
 
 // resolveHost resolves host to an IPv6 (AAAA) address. Resolution order:
-//   1. the configured dns_server (or the code default if unset),
-//   2. the system resolver (last resort).
+//  1. the configured dns_server (or the code default if unset),
+//  2. the system resolver (last resort).
+//
 // There is no secondary DNS fallback list. Only AAAA records are considered —
 // a host with no IPv6 address cannot be reached by this pure-IPv6 proxy, so
 // any IPv4 results are discarded rather than dialed.
@@ -152,16 +162,16 @@ const defaultDNSServer = "2606:4700:4700::1111"
 // source's single allowed outbound connection. The transport (UDP first, TCP
 // on truncation) is left to Go so large/truncated AAAA responses are not
 // silently dropped.
-func (s *ProxyServer) resolveHost(ctx context.Context, host, network string) (net.IP, error) {
-	return s.resolveHostImpl(ctx, host, network, 0)
+func (s *ProxyServer) resolveHost(pool *IPv6Pool, ctx context.Context, host, network string) (net.IP, error) {
+	return s.resolveHostImpl(pool, ctx, host, network, 0)
 }
 
 // resolveHostImpl resolves host to an IPv6 (AAAA) address. A host with a static
 // mapping in pool.hosts takes highest priority: a literal IPv6 is returned
 // directly, while an alias domain is resolved (AAAA) in turn — allowing
 // domain->domain mappings. depth guards against alias loops.
-func (s *ProxyServer) resolveHostImpl(ctx context.Context, host, network string, depth int) (net.IP, error) {
-	if target, ok := s.pool.hosts[normalizeHost(host)]; ok {
+func (s *ProxyServer) resolveHostImpl(pool *IPv6Pool, ctx context.Context, host, network string, depth int) (net.IP, error) {
+	if target, ok := pool.hosts[normalizeHost(host)]; ok {
 		if ip := net.ParseIP(target); ip != nil && ip.To4() == nil {
 			log.Printf("[DNS] %s static mapping -> %s", host, ip)
 			return ip, nil
@@ -171,16 +181,16 @@ func (s *ProxyServer) resolveHostImpl(ctx context.Context, host, network string,
 			return nil, fmt.Errorf("hosts alias chain too deep for %s", host)
 		}
 		log.Printf("[DNS] %s host-alias -> %s", host, target)
-		return s.resolveHostImpl(ctx, target, network, depth+1)
+		return s.resolveHostImpl(pool, ctx, target, network, depth+1)
 	}
 
 	// Serve a cached AAAA if it is still fresh, so repeated requests to the
 	// same domain skip the DNS query entirely.
-	if ip, ok := s.pool.dnsCache.get(host); ok {
+	if ip, ok := pool.dnsCache.get(host); ok {
 		return ip, nil
 	}
 
-	primary := s.pool.dnsServerResolved()
+	primary := pool.dnsServerResolved()
 	if primary == "" {
 		primary = defaultDNSServer
 	}
@@ -200,7 +210,7 @@ func (s *ProxyServer) resolveHostImpl(ctx context.Context, host, network string,
 		}
 		// Cache the successful AAAA resolution for reuse by subsequent
 		// requests (see dnsCacheTTL for the freshness window).
-		s.pool.dnsCache.put(host, v6[0])
+		pool.dnsCache.put(host, v6[0])
 		return v6[0], nil
 	}
 	return nil, fmt.Errorf("dns lookup %s: %w", host, lastErr)
@@ -217,15 +227,14 @@ func normalizeHost(host string) string {
 	return strings.ToLower(strings.TrimSpace(h))
 }
 
-
-func (s *ProxyServer) dialOut(network, target, clientHint string) (net.Conn, string, error) {
-	retries := s.cfg.MaxRetries
+func (s *ProxyServer) dialOut(pool *IPv6Pool, cfg *Config, network, target, clientHint string) (net.Conn, string, error) {
+	retries := cfg.MaxRetries
 	if retries < 1 {
 		retries = 1
 	}
 	// Ephemeral fresh-source strategy only helps IPv6 destinations (we have no
 	// IPv4 source addresses), and only when enabled.
-	useEphemeral := s.pool.sourceMode == "ephemeral" && network == "tcp6"
+	useEphemeral := pool.GetSourceMode() == "ephemeral" && network == "tcp6"
 	if !useEphemeral {
 		retries = 1
 	}
@@ -241,7 +250,7 @@ func (s *ProxyServer) dialOut(network, target, clientHint string) (net.Conn, str
 	for i := 0; i < retries; i++ {
 		var ip string
 		var err error
-		ip, err = s.selectSource(clientHint)
+		ip, err = s.selectSource(pool, clientHint)
 		if err != nil {
 			return nil, "", err
 		}
@@ -250,12 +259,12 @@ func (s *ProxyServer) dialOut(network, target, clientHint string) (net.Conn, str
 		// bound to this connection's source address.
 		dialTarget := target
 		if literalIP == nil {
-			resolved, rerr := s.resolveHost(ctx, host, network)
+			resolved, rerr := s.resolveHost(pool, ctx, host, network)
 			if rerr != nil {
 				log.Printf("[DNS] %s via source %s failed: %v", host, ip, rerr)
 				lastErr = rerr
 				if useEphemeral {
-					s.pool.releaseEphemeral(ip)
+					pool.releaseEphemeral(ip)
 				}
 				continue
 			}
@@ -263,26 +272,26 @@ func (s *ProxyServer) dialOut(network, target, clientHint string) (net.Conn, str
 		}
 
 		dialer := &net.Dialer{
-			Timeout:   time.Duration(s.cfg.ConnectTimeout) * time.Second,
+			Timeout:   time.Duration(cfg.ConnectTimeout) * time.Second,
 			LocalAddr: &net.TCPAddr{IP: net.ParseIP(ip)},
 		}
 		conn, derr := dialer.DialContext(ctx, network, dialTarget)
 		if derr == nil {
-			if s.pool.sourceMode == "slaac" {
-				s.pool.recordRequest(ip, true)
+			if pool.GetSourceMode() == "slaac" {
+				pool.recordRequest(ip, true)
 			}
 			return conn, ip, nil
 		}
 		lastErr = derr
 		log.Printf("[DIAL] %s via %s failed: %v", dialTarget, ip, derr)
 		if useEphemeral {
-			s.pool.releaseEphemeral(ip)
+			pool.releaseEphemeral(ip)
 		}
 	}
 	// All attempts failed: drop any cached AAAA for this host so the next
 	// request re-resolves rather than reusing a possibly-dead address.
 	if literalIP == nil {
-		s.pool.dnsCache.invalidate(host)
+		pool.dnsCache.invalidate(host)
 	}
 	return nil, "", lastErr
 }
@@ -300,10 +309,12 @@ func (s *ProxyServer) handleHTTP(conn net.Conn, br *bufio.Reader) {
 
 	log.Printf("[HTTP] %s %s", req.Method, req.URL)
 
+	pool := s.pool()
+	cfg := s.cfg()
 	if req.Method == http.MethodConnect {
-		s.httpConnect(conn, req, srcIPv6)
+		s.httpConnect(pool, cfg, conn, req, srcIPv6)
 	} else {
-		s.httpForward(conn, req, srcIPv6)
+		s.httpForward(pool, cfg, conn, req, srcIPv6)
 	}
 }
 
@@ -326,10 +337,10 @@ func formatDialTarget(host, defaultPort string) string {
 	return host
 }
 
-func (s *ProxyServer) httpConnect(conn net.Conn, req *http.Request, srcIPv6 string) {
+func (s *ProxyServer) httpConnect(pool *IPv6Pool, cfg *Config, conn net.Conn, req *http.Request, srcIPv6 string) {
 	target := formatDialTarget(req.Host, "443")
 
-	tgt, srcIP, err := s.dialOut("tcp6", target, srcIPv6)
+	tgt, srcIP, err := s.dialOut(pool, cfg, "tcp6", target, srcIPv6)
 	if err != nil {
 		log.Printf("[HTTP] Connect %s: %v", target, err)
 		httpReply(conn, 502, err.Error())
@@ -337,18 +348,18 @@ func (s *ProxyServer) httpConnect(conn net.Conn, req *http.Request, srcIPv6 stri
 	}
 	log.Printf("[HTTP] Connect %s via %s", target, srcIP)
 	defer tgt.Close()
-	if s.pool.sourceMode == "ephemeral" {
-		defer s.pool.releaseEphemeral(srcIP)
+	if pool.GetSourceMode() == "ephemeral" {
+		defer pool.releaseEphemeral(srcIP)
 	}
 
 	fmt.Fprintf(conn, "HTTP/1.1 200 Connection Established\r\n\r\n")
 	relay(conn, tgt)
 }
 
-func (s *ProxyServer) httpForward(conn net.Conn, req *http.Request, srcIPv6 string) {
+func (s *ProxyServer) httpForward(pool *IPv6Pool, cfg *Config, conn net.Conn, req *http.Request, srcIPv6 string) {
 	host := formatDialTarget(req.Host, "80")
 
-	tgt, srcIP, err := s.dialOut("tcp6", host, srcIPv6)
+	tgt, srcIP, err := s.dialOut(pool, cfg, "tcp6", host, srcIPv6)
 	if err != nil {
 		log.Printf("[HTTP] Connect %s: %v", host, err)
 		httpReply(conn, 502, err.Error())
@@ -356,8 +367,8 @@ func (s *ProxyServer) httpForward(conn net.Conn, req *http.Request, srcIPv6 stri
 	}
 	log.Printf("[HTTP] Forward %s via %s", host, srcIP)
 	defer tgt.Close()
-	if s.pool.sourceMode == "ephemeral" {
-		defer s.pool.releaseEphemeral(srcIP)
+	if pool.GetSourceMode() == "ephemeral" {
+		defer pool.releaseEphemeral(srcIP)
 	}
 
 	req.RequestURI = ""
@@ -375,7 +386,7 @@ func (s *ProxyServer) httpForward(conn net.Conn, req *http.Request, srcIPv6 stri
 	// Cap the data phase too: this ISP sometimes lets the SYN through but then
 	// blackholes the payload, which would otherwise hang io.Copy (and the
 	// per-connection source address) indefinitely.
-	dl := time.Now().Add(time.Duration(s.cfg.ConnectTimeout) * time.Second)
+	dl := time.Now().Add(time.Duration(cfg.ConnectTimeout) * time.Second)
 	tgt.SetDeadline(dl)
 	io.Copy(conn, tgt)
 	tgt.Close()
@@ -410,6 +421,8 @@ func relay(a, b net.Conn) {
 // ==================== SOCKS5 Proxy ====================
 
 func (s *ProxyServer) handleSOCKS5(conn net.Conn, br *bufio.Reader) {
+	pool := s.pool()
+	cfg := s.cfg()
 	// Client greeting
 	hdr := make([]byte, 2)
 	if _, err := io.ReadFull(br, hdr); err != nil || hdr[0] != 0x05 {
@@ -520,15 +533,15 @@ func (s *ProxyServer) handleSOCKS5(conn net.Conn, br *bufio.Reader) {
 		network = "tcp4"
 	}
 
-	tgt, srcIP, err := s.dialOut(network, target, srcIPv6)
+	tgt, srcIP, err := s.dialOut(pool, cfg, network, target, srcIPv6)
 	if err != nil {
 		log.Printf("[SOCKS5] Connect %s: %v", target, err)
 		socks5Reply(conn, 0x05, nil, 0)
 		return
 	}
 	defer tgt.Close()
-	if s.pool.sourceMode == "ephemeral" && network == "tcp6" {
-		defer s.pool.releaseEphemeral(srcIP)
+	if pool.GetSourceMode() == "ephemeral" && network == "tcp6" {
+		defer pool.releaseEphemeral(srcIP)
 	}
 
 	log.Printf("[SOCKS5] Connect %s via %s", target, srcIP)
@@ -556,6 +569,6 @@ func socks5Reply(conn net.Conn, status byte, bindIP net.IP, bindPort int) {
 	resp = append(resp, pb...)
 	conn.Write(resp)
 }
+
 // NormalizeHost is exported wrapper for normalizeHost.
 func NormalizeHost(host string) string { return normalizeHost(host) }
-

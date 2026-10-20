@@ -77,18 +77,18 @@ func DetectIPv6Prefix(iface string) (string, error) {
 				if err != nil {
 					continue
 				}
-			ones, _ := ipNet.Mask.Size()
-			if ones > 64 {
-				// Skip /128 host addresses (likely added by us or SLAAC temp)
-				continue
-			}
-			// Real prefix (<= /64): derive clean /64 prefix
-			prefix := ipNet.IP.To16()
-			prefix[12] = 0
-			prefix[13] = 0
-			prefix[14] = 0
-			prefix[15] = 0
-			return fmt.Sprintf("%s/64", prefix.String()), nil
+				ones, _ := ipNet.Mask.Size()
+				if ones > 64 {
+					// Skip /128 host addresses (likely added by us or SLAAC temp)
+					continue
+				}
+				// Real prefix (<= /64): derive clean /64 prefix
+				prefix := ipNet.IP.To16()
+				prefix[12] = 0
+				prefix[13] = 0
+				prefix[14] = 0
+				prefix[15] = 0
+				return fmt.Sprintf("%s/64", prefix.String()), nil
 			}
 		}
 	}
@@ -225,10 +225,15 @@ func (p *IPv6Pool) reconcileSLAAC() {
 		for _, ip := range old {
 			p.RemoveAddress(ip)
 		}
+		p.mu.Lock()
 		p.prefix = slaacPrefix
 		p.slaacPrefix = slaacPrefix
 		p.slaacWANIP = wanIP
-		ips := p.GenerateSLAACAddresses(p.slaacPoolSize, wanIP)
+		p.mu.Unlock()
+		p.cfgMu.RLock()
+		poolSize := p.slaacPoolSize
+		p.cfgMu.RUnlock()
+		ips := p.GenerateSLAACAddresses(poolSize, wanIP)
 		for _, ip := range ips {
 			if aerr := p.AddAddress(ip, subnetOf(ip)); aerr != nil {
 				log.Printf("[SLAAC] re-add %s: %v", ip, aerr)
@@ -256,8 +261,8 @@ func (p *IPv6Pool) reconcileSLAAC() {
 		}
 	}
 }
+
 // DetectSLAAC is exported wrapper for detectSLAAC (used by main).
 func DetectSLAAC(wanIface string) (net.IP, *net.IPNet, error) {
-    return detectSLAAC(wanIface)
+	return detectSLAAC(wanIface)
 }
-

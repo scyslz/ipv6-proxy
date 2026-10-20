@@ -1,0 +1,1664 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IPv6 Proxy 控制台</title>
+<style>
+:root{
+  --bg:#0b1020; --bg2:#111a30; --panel:#131d35; --panel2:#18233f;
+  --line:#26314d; --text:#e6ecff; --muted:#8b9ac0; --accent:#5b8cff;
+  --ok:#3ddc97; --warn:#ffc857; --bad:#ff6b7a; --idle:#7f8ba8;
+  --radius:12px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{
+  background:radial-gradient(1200px 600px at 10% -10%,#1b2b52 0%,transparent 60%),
+             radial-gradient(900px 500px at 110% 0%,#1a3b3a 0%,transparent 55%),
+             var(--bg);
+  color:var(--text);
+  font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  min-height:100%;
+}
+a{color:var(--accent);text-decoration:none}
+code,pre,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace}
+.wrap{max-width:1280px;margin:0 auto;padding:22px 20px 60px}
+header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:20px}
+.logo{width:38px;height:38px;border-radius:11px;background:linear-gradient(135deg,#5b8cff,#3ddc97);
+  display:grid;place-items:center;font-weight:800;color:#08101f;font-size:15px;letter-spacing:-.5px}
+h1{font-size:19px;margin:0;font-weight:650;letter-spacing:.2px}
+.sub{color:var(--muted);font-size:12px}
+.spacer{flex:1}
+.conn{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px;
+  background:var(--panel);border:1px solid var(--line);padding:7px 12px;border-radius:999px}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--idle);box-shadow:0 0 0 3px rgba(127,139,168,.15)}
+.dot.ok{background:var(--ok);box-shadow:0 0 0 3px rgba(61,220,151,.15)}
+.dot.bad{background:var(--bad);box-shadow:0 0 0 3px rgba(255,107,122,.15)}
+.dot.warn{background:var(--warn);box-shadow:0 0 0 3px rgba(255,200,87,.15)}
+
+.auth{display:none;gap:10px;align-items:center;background:var(--panel);border:1px solid var(--line);
+  padding:12px 14px;border-radius:var(--radius);margin-bottom:16px;flex-wrap:wrap}
+.auth.show{display:flex}
+.auth input{flex:1;min-width:200px}
+
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:18px;overflow-x:auto}
+.tab{background:none;border:0;color:var(--muted);padding:11px 15px;cursor:pointer;font:inherit;
+  border-bottom:2px solid transparent;white-space:nowrap;border-radius:8px 8px 0 0}
+.tab:hover{color:var(--text);background:rgba(255,255,255,.03)}
+.tab.active{color:var(--text);border-bottom-color:var(--accent)}
+.panel{display:none}
+.panel.active{display:block;animation:fade .18s ease}
+.panel[hidden],.tab[hidden]{display:none!important}
+@keyframes fade{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}
+
+.grid{display:grid;gap:14px}
+.g4{grid-template-columns:repeat(4,minmax(0,1fr))}
+.g2{grid-template-columns:repeat(2,minmax(0,1fr))}
+@media(max-width:980px){.g4{grid-template-columns:repeat(2,minmax(0,1fr))}.g2{grid-template-columns:1fr}}
+@media(max-width:560px){.g4{grid-template-columns:1fr}}
+
+.card{background:linear-gradient(180deg,rgba(255,255,255,.025),rgba(255,255,255,0)),var(--panel);
+  border:1px solid var(--line);border-radius:var(--radius);padding:15px 16px}
+.card h3{margin:0 0 12px;font-size:13px;color:var(--muted);font-weight:600;letter-spacing:.3px;text-transform:uppercase}
+.stat{display:flex;flex-direction:column;gap:2px}
+.stat .k{color:var(--muted);font-size:12px}
+.stat .v{font-size:24px;font-weight:700;letter-spacing:-.4px}
+.stat .v.ok{color:var(--ok)} .stat .v.bad{color:var(--bad)} .stat .v.warn{color:var(--warn)}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:7px 14px;font-size:13px}
+.kv dt{color:var(--muted)}
+.kv dd{margin:0;word-break:break-all}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.row.end{justify-content:flex-end}
+
+label{display:block;color:var(--muted);font-size:12px;margin-bottom:5px}
+input,select,textarea{
+  width:100%;background:#0d1528;border:1px solid var(--line);color:var(--text);
+  border-radius:9px;padding:9px 11px;font:inherit;outline:none;transition:border-color .15s,box-shadow .15s
+}
+input:focus,select:focus,textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(91,140,255,.15)}
+input::placeholder{color:#5a6785}
+.field{margin-bottom:13px}
+.field .hint{color:#6f7d9f;font-size:11px;margin-top:4px}
+.check{display:flex;gap:9px;align-items:center;color:var(--text);font-size:13px}
+.check input{width:auto}
+input[type="checkbox"],input[type="radio"]{width:auto;flex:0 0 auto;padding:0;border:0;background:none;
+  box-shadow:none;accent-color:var(--accent)}
+input[type="checkbox"]:focus,input[type="radio"]:focus{box-shadow:none}
+
+button{font:inherit;cursor:pointer;border-radius:9px;padding:8px 13px;border:1px solid var(--line);
+  background:var(--panel2);color:var(--text);transition:.15s}
+button:hover{border-color:#3a4a70;background:#1d2b4b}
+button:active{transform:translateY(1px)}
+button:disabled{opacity:.45;cursor:not-allowed;transform:none}
+button.primary{background:linear-gradient(180deg,#5b8cff,#3f6fe0);border-color:#4a7bf0;color:#fff;font-weight:600}
+button.primary:hover{filter:brightness(1.08);background:linear-gradient(180deg,#6b98ff,#4a7bf0)}
+button.ghost{background:transparent}
+button.danger{color:var(--bad);border-color:rgba(255,107,122,.35)}
+button.danger:hover{background:rgba(255,107,122,.08)}
+button.sm{padding:4px 9px;font-size:12px;border-radius:7px}
+
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.4px;
+  padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:9px 10px;border-bottom:1px solid rgba(38,49,77,.55);vertical-align:middle}
+tr:last-child td{border-bottom:0}
+tbody tr:hover{background:rgba(91,140,255,.045)}
+.table-wrap{overflow-x:auto;margin:-4px -4px 0;padding:0 4px}
+
+.badge{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600;
+  border:1px solid transparent;white-space:nowrap}
+.badge.alive{color:var(--ok);background:rgba(61,220,151,.1);border-color:rgba(61,220,151,.28)}
+.badge.dead,.badge.failed{color:var(--bad);background:rgba(255,107,122,.1);border-color:rgba(255,107,122,.28)}
+.badge.checking,.badge.unknown{color:var(--warn);background:rgba(255,200,87,.1);border-color:rgba(255,200,87,.28)}
+.badge.pinned{color:var(--accent);background:rgba(91,140,255,.12);border-color:rgba(91,140,255,.3)}
+
+.stages{display:flex;gap:5px;align-items:center}
+.sdot{width:9px;height:9px;border-radius:50%;background:#33405f}
+.sdot.ok{background:var(--ok)} .sdot.bad{background:var(--bad)}
+.sdot.na{background:#33405f;opacity:.5}
+
+pre{background:#0a1224;border:1px solid var(--line);border-radius:10px;padding:13px 14px;overflow:auto;
+  margin:0;font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-word;max-height:60vh}
+.logline{display:block}
+.logline.err{color:#ff9aa4}
+.logline.warn{color:#ffd27a}
+
+.toast{position:fixed;right:18px;bottom:18px;max-width:min(440px,90vw);background:var(--panel2);
+  border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:10px;padding:11px 14px;
+  box-shadow:0 12px 40px rgba(0,0,0,.45);font-size:13px;z-index:50;opacity:0;transform:translateY(8px);
+  transition:.2s;pointer-events:none}
+.toast.show{opacity:1;transform:none}
+.toast.ok{border-left-color:var(--ok)} .toast.err{border-left-color:var(--bad)}
+.split{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:860px){.split{grid-template-columns:1fr}}
+.section-title{display:flex;align-items:center;gap:10px;margin:26px 0 12px}
+.section-title h2{font-size:15px;margin:0;font-weight:650}
+.section-title .line{flex:1;height:1px;background:var(--line)}
+.muted{color:var(--muted)}
+.warn{color:var(--warn)}
+.small{font-size:12px}
+.copy{background:none;border:0;color:var(--muted);cursor:pointer;padding:0 3px;font-size:12px}
+.copy:hover{color:var(--accent)}
+.empty{padding:28px;text-align:center;color:var(--muted);font-size:13px}
+
+.cleanup-list{display:flex;flex-direction:column;gap:10px}
+.cleanup-item{display:flex;gap:12px;align-items:flex-start;background:var(--panel2);
+  border:1px solid var(--line);border-radius:10px;padding:12px 14px;cursor:pointer;margin:0}
+.cleanup-item:hover{border-color:#3a4a70}
+.cleanup-item input[type="checkbox"]{width:auto;margin-top:3px;accent-color:var(--accent)}
+.cleanup-item.danger-item{border-color:rgba(255,107,122,.28)}
+.cleanup-item.danger-item:hover{border-color:rgba(255,107,122,.5)}
+.cleanup-title{display:flex;align-items:center;gap:8px;color:var(--text);font-size:13px;font-weight:600;margin-bottom:2px}
+.stale-list{margin-top:6px;color:#ffd27a;word-break:break-all;line-height:1.5}
+
+.oci-vnic-group{border:1px solid var(--line);border-radius:10px;padding:9px 11px;margin:8px 0;min-width:0}
+.oci-vnic-head{font-size:12px;word-break:break-all;line-height:1.6;margin-bottom:3px}
+.oci-vnic-row{display:flex;align-items:center;gap:10px;justify-content:space-between;border:1px solid var(--line);border-radius:10px;padding:9px 11px;margin:8px 0;min-width:0}
+.oci-vnic-row.active{border-color:rgba(91,141,239,.55);background:rgba(91,141,239,.06)}
+.oci-vnic-info{min-width:0;flex:1 1 auto}
+.oci-vnic-actions{display:flex;gap:6px;flex:0 0 auto}
+.oci-vnic-meta{font-size:11px;word-break:break-all;line-height:1.5}
+.oci-delete{color:#ff8a95}
+.oci-vnic-switch{float:right;margin:-2px 0 2px 8px}
+.oci-badge{display:inline-block;margin-left:6px;padding:0 6px;border-radius:999px;background:rgba(91,141,239,.16);color:#9fc0ff;font-size:10px;vertical-align:1px}
+.oci-empty-vnic{padding:3px 2px}
+.oci-prefix-item{display:flex;align-items:flex-start;gap:8px;margin:6px 0;min-width:0}
+.oci-prefix-item input{width:auto;flex:0 0 auto;margin-top:3px}
+.oci-prefix-text{display:flex;flex-direction:column;gap:1px;flex:1;min-width:0;line-height:1.5}
+.oci-prefix-addr{word-break:break-all}
+.oci-prefix-state{font-size:11px;word-break:break-word}
+.oci-actions{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;min-width:0}
+.oci-new{display:flex;gap:10px;align-items:flex-end;flex:1 1 auto;min-width:0}
+.oci-new .oci-len{flex:0 0 96px}
+@media(min-width:640px){
+  .oci-prefix-text{flex-direction:row;flex-wrap:wrap;align-items:baseline;gap:0 8px}
+}
+@media(max-width:560px){
+  .oci-vnic-row{flex-wrap:wrap}
+  .oci-vnic-actions{width:100%}
+  .oci-vnic-actions>button{flex:1 1 0}
+  .oci-actions>.oci-or{display:none}
+  .oci-actions>.oci-use{flex:1 1 100%;width:100%}
+  .oci-new{flex:1 1 100%;width:100%;flex-wrap:wrap}
+  .oci-new>button{flex:1 1 0;min-width:0;white-space:normal}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo">v6</div>
+    <div>
+      <h1>IPv6 Proxy 控制台</h1>
+      <div class="sub" id="headerSub">加载中…</div>
+    </div>
+    <div class="spacer"></div>
+    <div class="conn"><span class="dot" id="connDot"></span><span id="connText">连接中</span></div>
+    <button class="sm ghost" id="refreshBtn">刷新</button>
+  </header>
+
+  <div class="auth" id="authBar">
+    <span class="small">该 API 已启用 Token 保护，请输入 <code>api_token</code>：</span>
+    <input type="password" id="tokenInput" placeholder="API Token" autocomplete="current-password">
+    <button class="primary sm" id="tokenSave">保存</button>
+    <button class="sm ghost" id="tokenClear">清除</button>
+  </div>
+
+  <nav class="tabs">
+    <button class="tab active" data-tab="overview">概览</button>
+    <button class="tab" data-tab="pool">地址池</button>
+    <button class="tab" data-tab="oci" id="tabOci" hidden>OCI</button>
+    <button class="tab" data-tab="hosts">域名映射</button>
+    <button class="tab" data-tab="settings">配置</button>
+    <button class="tab" data-tab="cleanup">清理</button>
+    <button class="tab" data-tab="logs">日志</button>
+  </nav>
+
+  <!-- ===================== OVERVIEW ===================== -->
+  <section class="panel active" id="panel-overview">
+    <div class="grid g4">
+      <div class="card stat"><span class="k">地址总数</span><span class="v" id="sTotal">–</span></div>
+      <div class="card stat"><span class="k">可用</span><span class="v ok" id="sAlive">–</span></div>
+      <div class="card stat"><span class="k">不可用</span><span class="v bad" id="sDead">–</span></div>
+      <div class="card stat"><span class="k">当前出口</span><span class="v mono" id="sPinned" style="font-size:14px;padding-top:7px">–</span></div>
+    </div>
+
+    <div class="split" style="margin-top:14px">
+      <div class="card">
+        <h3>运行状态</h3>
+        <dl class="kv">
+          <dt>出口模式</dt><dd id="sSource">–</dd>
+          <dt>选择模式</dt><dd id="sSelection">–</dd>
+          <dt>前缀</dt><dd class="mono" id="sPrefix">–</dd>
+          <dt>VNIC 子网</dt><dd class="mono" id="sVnicSubnet">–</dd>
+          <dt>WAN / 虚拟网卡</dt><dd id="sIfaces">–</dd>
+          <dt>DNS / 测试目标</dt><dd class="mono" id="sDns">–</dd>
+          <dt>健康检查</dt><dd id="sHealth">–</dd>
+        </dl>
+      </div>
+      <div class="card">
+        <h3>代理地址</h3>
+        <div class="field">
+          <label>HTTP / HTTPS 代理</label>
+          <div class="row">
+            <input class="mono" id="proxyHttp" readonly>
+            <button class="sm" data-copy="proxyHttp">复制</button>
+          </div>
+        </div>
+        <div class="field">
+          <label>SOCKS5 代理</label>
+          <div class="row">
+            <input class="mono" id="proxySocks" readonly>
+            <button class="sm" data-copy="proxySocks">复制</button>
+          </div>
+        </div>
+        <div class="small muted">请求头 <code>X-Source-IPv6: &lt;ip&gt;</code> 可指定这一次请求的源地址。</div>
+      </div>
+    </div>
+
+    <div class="section-title"><h2>快捷操作</h2><div class="line"></div></div>
+    <div class="card">
+      <div class="row">
+        <button class="primary" id="btnNextCheck">切换并检测出口 IP</button>
+        <button id="btnNext">切换到下一个可用 IP</button>
+        <button id="btnEgress" title="通过本机代理 curl https://api64.ipify.org">检测当前出口</button>
+        <button id="btnHealth">立即健康检查</button>
+        <div class="row" style="gap:6px">
+          <select id="genCount" style="width:auto">
+            <option value="5">5 个</option>
+            <option value="10" selected>10 个</option>
+            <option value="20">20 个</option>
+            <option value="50">50 个</option>
+          </select>
+          <button id="btnGenerate">生成并测试新 IP</button>
+        </div>
+        <div class="spacer"></div>
+        <label class="check" style="margin:0">
+          <input type="checkbox" id="autoRefresh" checked> 自动刷新（5s）
+        </label>
+      </div>
+      <div class="small muted" id="egressResult" style="margin-top:10px">出口检测：通过本机代理请求 <code>https://api64.ipify.org</code>，显示实际使用的源 IP。</div>
+      <div class="small muted" style="margin-top:6px">
+        生成会向池中新增随机地址并逐个探测，过程可能需要数秒到数十秒；结果可在「地址池」查看。
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== POOL ===================== -->
+  <section class="panel" id="panel-pool">
+    <div class="card">
+      <div class="row" style="margin-bottom:12px">
+        <input id="addIp" placeholder="手动添加 IPv6，例如 2603:c024:4517:a81e:1234::1" style="flex:1;min-width:240px">
+        <button class="primary" id="btnAddIp">添加</button>
+        <div class="spacer"></div>
+        <span class="small muted" id="poolMeta"></span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>状态</th><th>地址</th><th>公网回显</th><th>探测阶段</th>
+              <th>最近检查</th><th>统计</th><th style="text-align:right">操作</th>
+            </tr>
+          </thead>
+          <tbody id="poolBody">
+            <tr><td colspan="7" class="empty">加载中…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="small muted" style="margin-top:10px">
+      探测阶段依次为 路由 / 绑定 / TCP / TLS / HTTPS；绿色为通过，红色为失败，灰色为未检测。
+    </div>
+  </section>
+
+  <!-- ===================== HOSTS ===================== -->
+  <section class="panel" id="panel-hosts">
+    <div class="card">
+      <div class="row" style="align-items:flex-end;margin-bottom:6px">
+        <div style="flex:1;min-width:180px">
+          <label>域名</label>
+          <input id="hostName" placeholder="example.com">
+        </div>
+        <div style="flex:1;min-width:220px">
+          <label>目标 IPv6 或别名域名</label>
+          <input id="hostTarget" class="mono" placeholder="2606:4700::1 或 edge.example.net">
+        </div>
+        <button class="primary" id="btnAddHost">保存映射</button>
+      </div>
+      <div class="small muted" style="margin-bottom:14px">
+        命中映射的域名会跳过 DNS，直接连接指定 IPv6。别名域名会继续解析其 AAAA。
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>域名</th><th>目标</th><th style="text-align:right">操作</th></tr></thead>
+          <tbody id="hostsBody"><tr><td colspan="3" class="empty">加载中…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== SETTINGS ===================== -->
+  <section class="panel" id="panel-settings">
+    <form id="cfgForm">
+      <div class="card">
+        <h3>基础</h3>
+        <div class="grid g2">
+          <div class="field"><label>HTTP 代理监听地址</label><input id="c_proxy_addr" class="mono" placeholder="[::]:8080"><div class="hint">需重启生效</div></div>
+          <div class="field"><label>API 监听地址</label><input id="c_api_addr" class="mono" placeholder="[::]:9191"><div class="hint">需重启生效</div></div>
+          <div class="field"><label>IPv6 前缀</label><input id="c_prefix" class="mono" placeholder="留空自动探测"><div class="hint">CIDR，例如 2409:8a62:578:d600::/60；立即生效（重建地址池）</div></div>
+          <div class="field"><label>出口模式 source_mode</label>
+            <select id="c_source_mode">
+              <option value="pool">pool（PD 前缀地址池）</option>
+              <option value="slaac">slaac（固定 SLAAC 地址）</option>
+              <option value="oci">oci（OCI 网卡 IPv6）</option>
+              <option value="ephemeral">ephemeral（每连接新地址）</option>
+            </select><div class="hint">立即生效（重建地址池）</div></div>
+          <div class="field"><label>选择模式 selection_mode</label>
+            <select id="c_selection_mode">
+              <option value="round-robin">round-robin（轮询）</option>
+              <option value="random">random（随机）</option>
+              <option value="manual">manual（手动固定）</option>
+            </select><div class="hint">立即生效</div></div>
+          <div class="field"><label>虚拟网卡名 dummy_iface</label><input id="c_dummy_iface" class="mono"><div class="hint">立即生效（重建地址池）</div></div>
+          <div class="field"><label>DNS 服务器</label><input id="c_dns_server" class="mono" placeholder="2606:4700:4700::1111"><div class="hint">IPv6 或域名，立即生效</div></div>
+          <div class="field"><label>健康检查目标</label><input id="c_test_target" class="mono" placeholder="2606:4700:4700::1111"><div class="hint">IPv6 或域名，立即生效</div></div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:14px">
+        <h3>地址池与探测</h3>
+        <div class="grid g2">
+          <div class="field"><label>子网数量 subnet_count</label><input id="c_subnet_count" type="number" min="1" max="16"><div class="hint">仅 pool（PD）模式使用：从 /60 等 PD 里生成几个 /64；1-16，立即生效（重建地址池）</div></div>
+          <div class="field"><label>SLAAC / OCI 池大小</label><input id="c_slaac_pool_size" type="number" min="1" max="32"><div class="hint">1-32，立即生效（重建地址池）</div></div>
+          <div class="field"><label>健康检查间隔（秒）</label><input id="c_health_interval_sec" type="number" min="5"><div class="hint">立即生效</div></div>
+          <div class="field"><label>连接超时（秒）</label><input id="c_connect_timeout_sec" type="number" min="1" max="120"><div class="hint">立即生效</div></div>
+          <div class="field"><label>失败重试次数</label><input id="c_max_retries" type="number" min="1" max="50"><div class="hint">仅 ephemeral 模式生效，立即生效</div></div>
+          <div class="field"><label>失败阈值 failure_threshold</label><input id="c_failure_threshold" type="number" min="1"><div class="hint">立即生效</div></div>
+        </div>
+      </div>
+
+      <div class="card" >
+        <h3 style="margin:0 0 8px">主机自身出口</h3>
+        <div class="small muted" style="margin-bottom:10px">
+          只影响主机自己主动访问网络，不影响代理池。代理始终使用当前 VNIC 的源地址。
+        </div>
+        <div class="grid g2">
+          <div class="field">
+            <label>主机出口策略</label>
+            <select id="hostEgressMode">
+              <option value="system">保持系统默认（不修改路由）</option>
+              <option value="ipv4">优先 IPv4</option>
+              <option value="ipv6">优先 IPv6（指定 VNIC）</option>
+              <option value="proxy">跟随代理当前 VNIC 与固定 IP</option>
+            </select>
+            <div class="hint">IPv4 优先会写入 /etc/gai.conf；IPv6 优先会设置主机默认路由 metric 49</div>
+          </div>
+          <div class="field">
+            <label>主机 IPv6 出口 VNIC</label>
+            <select id="hostEgressVnic"></select>
+            <div class="hint">仅「优先 IPv6（指定 VNIC）」时使用</div>
+          </div>
+          <div class="field">
+            <label>主机 IPv6 源地址（可选）</label>
+            <input id="hostEgressIp" list="hostEgressIpList" placeholder="留空自动选择" class="mono" autocomplete="off">
+            <datalist id="hostEgressIpList"></datalist>
+            <div class="hint">留空＝自动（优先动态地址，其次网卡上的 /128）。也可填该 VNIC /64 内任意地址，应用时会自动加到网卡</div>
+          </div>
+        </div>
+        <div class="oci-actions">
+          <button type="button" class="primary" id="btnHostEgressApply">应用主机出口</button>
+        </div>
+        <div class="small muted" id="hostEgressInfo" style="margin-top:10px"></div>
+      </div>
+      <div class="card" style="margin-top:14px">
+        <h3>安全</h3>
+        <div class="field" style="max-width:520px">
+          <label>API Token</label>
+          <input id="c_api_token" type="password" placeholder="留空则保持不变" autocomplete="new-password">
+          <div class="hint" id="tokenHint">设置后所有 /api/* 请求都需要携带 Token，立即生效。</div>
+        </div>
+      </div>
+
+      <div class="row end" style="margin-top:16px">
+        <span class="small muted" id="cfgPath"></span>
+        <button type="button" class="ghost" id="btnReloadCfg">重新载入</button>
+        <button type="submit" class="primary">保存配置</button>
+      </div>
+    </form>
+    <div class="card" style="margin-top:14px">
+      <h3>生效说明</h3>
+      <div class="small muted">
+        代理 / API 监听地址在进程启动时绑定，修改后需重启才能生效。<br>
+        前缀、出口模式、池大小、子网数量、虚拟网卡、超时、OCI 等字段会热加载：改动地址池时会先构建新池，再安全回收旧池地址。<br>
+        选择模式、失败阈值、DNS / 测试目标、API Token 立即生效。<br>
+        配置文件路径：<code id="cfgFilePath">–</code>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== OCI ===================== -->
+  <section class="panel" id="panel-oci" hidden>
+    <div class="card" style="margin-bottom:14px">
+      <h3>OCI 接入</h3>
+      <div class="grid g2">
+        <div class="field"><label>Compartment OCID</label><input id="c_oci_compartment" class="mono" placeholder="留空使用租户"><div class="hint">立即生效（重建地址池）</div></div>
+        <div class="field"><label>VNIC OCID</label><input id="c_oci_vnic_id" class="mono" placeholder="留空自动探测"><div class="hint">立即生效（重建地址池）</div></div>
+        <div class="field"><label>OCI 前缀长度</label><input id="c_oci_prefix_length" type="number" min="0" max="128" step="4"><div class="hint">0=逐 IP；80-128（4 的倍数）=段内自分配；立即生效（重建地址池）</div></div>
+        <div class="field"><label>OCI 配置路径</label><input id="c_oci_config_path" class="mono" placeholder="~/.oci/config"><div class="hint">立即生效（重建地址池）</div></div>
+        <div class="field"><label class="check"><input type="checkbox" id="c_oci_no_create"> 只切换不创建网卡段（oci_no_create）</label><div class="hint">立即生效（重建地址池）</div></div>
+        <div class="field"><label>当前 OCI 前缀对象</label><input id="c_oci_prefix_id" class="mono" readonly><div class="hint">由下方「IPv6 前缀」维护，跨重启固定使用该段</div></div>
+      </div>
+      <div class="row end" style="margin-top:4px">
+        <span class="small muted">修改 OCI 接入参数后需点此保存，保存会重建地址池</span>
+        <button type="button" class="primary" id="btnSaveOciCfg">保存 OCI 配置</button>
+      </div>
+    </div>
+
+      <div class="card" >
+        <div class="row" style="margin-bottom:8px">
+          <h3 style="margin:0">OCI 网卡（VNIC）</h3>
+          <div class="spacer"></div>
+          <button type="button" class="sm ghost" id="btnOciPrefixRefresh">刷新</button>
+        </div>
+        <div class="small muted" style="margin-bottom:10px">
+          先在这里新建、切换或删除 VNIC。每个 VNIC 对应一个 /64 子网；切换成功后，再到下方「IPv6 前缀」编辑当前 VNIC 的地址段。
+        </div>
+        <div id="ociVnicList" class="small" style="margin-bottom:10px">加载中…</div>
+        <div class="oci-actions">
+          <button type="button" class="primary" id="btnOciNewVnic">新建 VNIC</button>
+          <span class="small muted" style="padding-bottom:8px">新建 = 新子网 + 新 VNIC（不复用已有 VNIC，实例通常最多 2 个）</span>
+        </div>
+        <div class="small" id="ociVnicMsg" style="margin-top:10px"></div>
+      </div>
+
+      <div class="card" >
+        <h3 style="margin:0 0 8px">IPv6 前缀（当前 VNIC）</h3>
+        <div class="small muted" style="margin-bottom:10px">
+          只编辑当前 VNIC 上的 IPv6 前缀。切换 VNIC 后，这里会自动显示新 VNIC 的前缀。
+          「新建前缀」只在当前 /64 内换段；要换 /64 请先在上方切换或新建 VNIC。
+        </div>
+        <div class="small muted" id="ociActiveVnicHint" style="margin-bottom:8px"></div>
+        <div id="ociPrefixList" class="small" style="margin-bottom:10px">加载中…</div>
+        <label class="check small" style="display:inline-flex;margin-bottom:10px">
+          <input type="checkbox" id="ociDeleteOld"> 切换成功后删除旧前缀对象（二次确认）
+        </label>
+        <div class="oci-actions">
+          <button type="button" class="primary oci-use" id="btnOciUsePrefix">切换到所选前缀</button>
+          <span class="small muted oci-or" style="padding-bottom:8px">或新建</span>
+          <div class="oci-new">
+            <div class="oci-len">
+              <label class="small muted">前缀长度</label>
+              <input type="number" id="ociNewPrefixLen" min="80" max="128" step="4" value="112">
+            </div>
+            <button type="button" id="btnOciRotatePrefix">同 VNIC 新建前缀并切换</button>
+          </div>
+        </div>
+        <div class="small" id="ociPrefixMsg" style="margin-top:10px"></div>
+      </div>
+
+  </section>
+
+  <!-- ===================== CLEANUP ===================== -->
+  <section class="panel" id="panel-cleanup">
+    <div class="grid g4">
+      <div class="card stat"><span class="k">虚拟网卡</span><span class="v mono" id="clDummyName" style="font-size:17px;padding-top:6px">–</span><span class="small muted" id="clDummyState">–</span></div>
+      <div class="card stat"><span class="k">池内地址</span><span class="v" id="clPoolCount">–</span><span class="small muted" id="clPoolPrefix">–</span></div>
+      <div class="card stat"><span class="k">残留 /128</span><span class="v warn" id="clStaleCount">–</span><span class="small muted" id="clSourceIface">–</span></div>
+      <div class="card stat"><span class="k">策略路由</span><span class="v" id="clRouteCount">–</span><span class="small muted" id="clRouteDetail">–</span></div>
+    </div>
+
+    <div class="card" style="margin-top:14px">
+      <div class="row" style="margin-bottom:12px">
+        <h2 style="font-size:15px;margin:0">清理残留状态</h2>
+        <div class="spacer"></div>
+        <button class="sm ghost" id="btnCleanupPreview">刷新预览</button>
+      </div>
+
+      <div class="cleanup-list">
+        <label class="cleanup-item">
+          <input type="checkbox" id="cl_opt_stale" checked>
+          <div>
+            <div class="cleanup-title">残留 /128 地址 <span class="badge checking" id="clStaleBadge">0</span></div>
+            <div class="small muted" id="clStaleHint">删除虚拟网卡上属于地址池前缀、但已不在池内的遗留地址。动态 / 临时 / noprefixroute 等系统地址会被跳过。</div>
+            <div class="mono small stale-list" id="clStaleList"></div>
+          </div>
+        </label>
+
+        <label class="cleanup-item">
+          <input type="checkbox" id="cl_opt_routes">
+          <div>
+            <div class="cleanup-title">策略路由表 <span class="badge checking" id="clRouteBadge">table 100</span></div>
+            <div class="small muted">删除本程序添加的 <code>ip -6 rule ... table 100</code> 规则，并清空该路由表。清理后健康检查会重新按需创建。</div>
+          </div>
+        </label>
+
+        <label class="cleanup-item">
+          <input type="checkbox" id="cl_opt_dummy">
+          <div>
+            <div class="cleanup-title">虚拟网卡 <span class="badge checking" id="clDummyBadge">v6test0</span></div>
+            <div class="small muted" id="clDummyHint">仅删除 dummy 类型网卡；当前正被地址池使用时拒绝删除，避免中断代理。</div>
+          </div>
+        </label>
+
+        <label class="cleanup-item danger-item">
+          <input type="checkbox" id="cl_opt_addresses">
+          <div>
+            <div class="cleanup-title">批量删除池内地址</div>
+            <div class="small muted">按下方「保留数量」保留固定 / 可用地址，其余全部删除；保留数量会写入 <code>slaac_pool_size</code>，重启后按该数量重新生成。保留 0 个等同清空池，代理将暂时不可用。</div>
+            <div class="row" style="margin-top:8px;gap:8px;align-items:center">
+              <span class="small muted">保留数量</span>
+              <input type="number" id="cl_keep" min="0" max="32" value="1" style="width:88px">
+              <span class="small muted" id="clKeepHint">1 = 只保留一个（优先固定/可用）</span>
+            </div>
+          </div>
+        </label>
+
+        <div class="cleanup-item" id="cl_oci_item" style="display:none">
+          <div style="flex:1">
+            <div class="cleanup-title">OCI IPv6 对象 <span class="badge checking" id="clOciBadge">0</span></div>
+            <div class="small muted" id="clOciHint">仅允许删除未入池、非动态的 /128 对象；前缀段（如 /112）和系统 SLAAC 地址不会被删除。</div>
+            <div class="mono small stale-list" id="clOciList"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="row end" style="margin-top:16px">
+        <span class="small muted" id="clLastResult"></span>
+        <button class="danger" id="btnCleanupRun">执行清理</button>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:14px">
+      <h3>说明</h3>
+      <div class="small muted">
+        清理只影响本进程管理的资源，不会删除 WAN 网卡或 ISP 下发的地址。<br>
+        OCI 模式会对比 OCI 控制台的 IPv6 对象：只清理未入池、非动态的本地 /128；<code>/112</code> 等前缀段和系统 SLAAC 地址始终保留。<br>
+        如果删除虚拟网卡，正在使用 <code>source_mode=pool</code> 的实例需要重启后才会重新创建。<br>
+        建议顺序：先「残留地址」，再按需「策略路由」，最后「虚拟网卡」。
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== LOGS ===================== -->
+  <section class="panel" id="panel-logs">
+    <div class="card">
+      <div class="row" style="margin-bottom:12px">
+        <label class="check" style="margin:0"><input type="checkbox" id="logAuto" checked> 自动刷新（3s）</label>
+        <select id="logLines" style="width:auto">
+          <option value="100">100 行</option>
+          <option value="200" selected>200 行</option>
+          <option value="500">500 行</option>
+          <option value="1000">1000 行</option>
+        </select>
+        <div class="spacer"></div>
+        <button class="sm danger" id="btnLogClear" title="清空内存中的日志缓冲">清空日志</button>
+        <button class="sm" id="btnLogRefresh">刷新</button>
+      </div>
+      <pre id="logBox">加载中…</pre>
+    </div>
+  </section>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const state = {
+  token: localStorage.getItem('v6proxy_token') || '',
+  status: null, ips: [], cfg: null,
+  tab: 'overview', auto: true, logAuto: true,
+  timer: null, logTimer: null, busy: false, ociSelected: new Set(),
+  ociPrefixes: [], ociPrefixPick: '', hostEgress: null
+};
+
+const $ = (id) => document.getElementById(id);
+const esc = (v) => String(v == null ? '' : v)
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+  .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+
+let toastTimer = null;
+function toast(msg, kind='') {
+  const el = $('toast');
+  el.textContent = msg;
+  el.className = 'toast show ' + kind;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.className = 'toast ' + kind; }, 4200);
+}
+
+async function api(path, opts = {}) {
+  opts.headers = Object.assign({}, opts.headers || {});
+  if (state.token) opts.headers['X-API-Token'] = state.token;
+  if (opts.body !== undefined && typeof opts.body !== 'string') {
+    opts.headers['Content-Type'] = 'application/json';
+    opts.body = JSON.stringify(opts.body);
+  }
+  const res = await fetch(path, opts);
+  const text = await res.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch (e) { data = { raw: text }; }
+  if (res.status === 401) {
+    showAuth(true);
+    throw new Error('需要 API Token，请在页面顶部输入');
+  }
+  if (!res.ok) throw new Error((data && data.error) || ('HTTP ' + res.status));
+  return data;
+}
+
+function showAuth(show) {
+  $('authBar').classList.toggle('show', !!show);
+  if (show) $('tokenInput').focus();
+}
+
+function setConn(kind, text) {
+  const d = $('connDot');
+  d.className = 'dot ' + kind;
+  $('connText').textContent = text;
+}
+
+function fmtTime(s) {
+  if (!s) return '–';
+  const d = new Date(s);
+  if (isNaN(d.getTime()) || d.getFullYear() < 2000) return '–';
+  const p = (n) => String(n).padStart(2, '0');
+  return `${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+function proxyPort() {
+  const a = state.status && (state.status.proxy_addr || '');
+  const i = String(a).lastIndexOf(':');
+  return i >= 0 ? a.slice(i+1) : '8080';
+}
+function proxyHost() {
+  let h = location.hostname || '[::1]';
+  if (h.includes(':') && !h.startsWith('[')) h = '[' + h + ']';
+  return h;
+}
+function proxyURLs() {
+  const port = proxyPort();
+  const host = proxyHost();
+  return {
+    http: `http://${host}:${port}`,
+    socks: `socks5://${host}:${port}`
+  };
+}
+
+/* ---------------- overview ---------------- */
+async function loadStatus() {
+  const s = await api('/api/status');
+  state.status = s;
+  $('sTotal').textContent = s.total ?? '–';
+  $('sAlive').textContent = s.alive ?? '–';
+  $('sDead').textContent = s.dead ?? '–';
+  $('sPinned').textContent = s.pinned || '未固定';
+  $('sPinned').className = 'v mono ' + (s.pinned ? '' : 'muted');
+  $('sSource').textContent = s.source_mode || '–';
+  $('sSelection').textContent = s.selection_mode || '–';
+  $('sPrefix').textContent = s.prefix || '–';
+  $('sVnicSubnet').textContent = s.vnic_subnet
+    ? `${s.vnic_subnet}（池前缀 /${(s.prefix || '').split('/')[1] || '?'} 位于其中）`
+    : '–';
+  $('sIfaces').textContent = `${s.wan_interface || '–'} / ${s.dummy_interface || '–'}`;
+  $('sDns').textContent = `${s.dns_server || '–'} / ${s.test_target || '–'}`;
+  $('sHealth').textContent = (s.health_check_running ? '检查中…' : '空闲') +
+    (s.health_interval ? ` · 间隔 ${s.health_interval}s` : '');
+  $('headerSub').textContent = `${s.source_mode || ''} · ${s.prefix || ''}`;
+  applyOciTabVisibility(s.source_mode || 'pool');
+
+  const urls = proxyURLs();
+  $('proxyHttp').value = urls.http;
+  $('proxySocks').value = urls.socks;
+
+  setConn('ok', '已连接');
+}
+
+/* ---------------- pool ---------------- */
+function stageDot(s) {
+  if (!s || s.success === undefined) return '<span class="sdot na" title="未检测"></span>';
+  return `<span class="sdot ${s.success ? 'ok' : 'bad'}" title="${esc(s.error || (s.success ? '通过' : '失败'))}"></span>`;
+}
+
+function renderPool() {
+  const body = $('poolBody');
+  const ips = (state.ips || []).slice().sort((a, b) => String(a.ip).localeCompare(String(b.ip)));
+  const pinned = state.status && state.status.pinned;
+  $('poolMeta').textContent = `共 ${ips.length} 个地址`;
+  if (!ips.length) {
+    body.innerHTML = '<tr><td colspan="7" class="empty">地址池为空</td></tr>';
+    return;
+  }
+  body.innerHTML = ips.map((a) => {
+    const st = a.status || a.state || 'unknown';
+    const cls = st === 'alive' ? 'alive' : (st === 'dead' || st === 'failed') ? 'dead' : 'checking';
+    const isPinned = pinned && pinned === a.ip;
+    const total = (a.success_count || 0) + (a.failure_count || 0);
+    const stats = total ? `${a.success_count || 0}/${total}` : '–';
+    const pub = a.public_ip && a.public_ip === a.ip
+      ? `<span class="badge alive">一致</span>`
+      : (a.public_ip ? `<span class="mono small">${esc(a.public_ip)}</span>` : '<span class="muted small">–</span>');
+    return `<tr>
+      <td>
+        <span class="badge ${cls}">${esc(st)}</span>
+        ${isPinned ? '<span class="badge pinned">当前</span>' : ''}
+      </td>
+      <td class="mono">${esc(a.ip)}<div class="small muted">${esc(a.interface || '')}</div></td>
+      <td>${pub}</td>
+      <td>
+        <div class="stages">
+          ${stageDot(a.route_check && {success: a.route_check.success, error: a.route_check.output})}
+          ${a.bind ? '<span class="sdot ok" title="bind 通过"></span>' : '<span class="sdot bad" title="bind 失败"></span>'}
+          ${stageDot(a.tcp)}${stageDot(a.tls)}${stageDot(a.https)}
+        </div>
+        <div class="small muted">${esc(a.failure_stage || '')}</div>
+      </td>
+      <td class="small">${fmtTime(a.last_check)}</td>
+      <td class="small">${esc(stats)}</td>
+      <td style="text-align:right;white-space:nowrap">
+        <button class="sm" data-act="pin" data-ip="${esc(a.ip)}" ${isPinned ? 'disabled' : ''}>固定</button>
+        <button class="sm" data-act="test" data-ip="${esc(a.ip)}">重测</button>
+        <button class="sm danger" data-act="del" data-ip="${esc(a.ip)}">删除</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+async function loadIPs() {
+  const list = await api('/api/ips');
+  state.ips = Array.isArray(list) ? list : Object.values(list || {});
+  renderPool();
+}
+
+/* ---------------- hosts ---------------- */
+function renderHosts(map) {
+  const entries = Object.entries(map || {}).sort((a, b) => a[0].localeCompare(b[0]));
+  const body = $('hostsBody');
+  if (!entries.length) {
+    body.innerHTML = '<tr><td colspan="3" class="empty">还没有静态映射</td></tr>';
+    return;
+  }
+  body.innerHTML = entries.map(([host, target]) => `<tr>
+    <td class="mono">${esc(host)}</td>
+    <td class="mono">${esc(target)}</td>
+    <td style="text-align:right"><button class="sm danger" data-delhost="${esc(host)}">删除</button></td>
+  </tr>`).join('');
+}
+
+async function loadHosts() {
+  const r = await api('/api/hosts');
+  renderHosts(r.hosts);
+}
+
+function applyOciTabVisibility(sourceMode) {
+  const isOci = sourceMode === 'oci';
+  const tab = $('tabOci');
+  const panel = $('panel-oci');
+  if (tab) tab.hidden = !isOci;
+  if (panel) panel.hidden = !isOci;
+  if (!isOci && state.tab === 'oci') switchTab('settings');
+}
+
+/* ---------------- config ---------------- */
+function fillConfig(payload) {
+  const c = payload.config || {};
+  state.cfg = payload;
+  $('c_proxy_addr').value = c.proxy_addr || '';
+  $('c_api_addr').value = c.api_addr || '';
+  $('c_prefix').value = c.prefix || '';
+  $('c_source_mode').value = c.source_mode || 'pool';
+  $('c_selection_mode').value = c.selection_mode || 'manual';
+  $('c_dummy_iface').value = c.dummy_iface || '';
+  $('c_dns_server').value = c.dns_server || '';
+  $('c_test_target').value = c.test_target || '';
+  $('c_subnet_count').value = c.subnet_count ?? 4;
+  $('c_slaac_pool_size').value = c.slaac_pool_size ?? 4;
+  $('c_health_interval_sec').value = c.health_interval_sec ?? 60;
+  $('c_connect_timeout_sec').value = c.connect_timeout_sec ?? 5;
+  $('c_max_retries').value = c.max_retries ?? 5;
+  $('c_failure_threshold').value = c.failure_threshold ?? 3;
+  $('c_oci_compartment').value = c.oci_compartment || '';
+  $('c_oci_vnic_id').value = c.oci_vnic_id || '';
+  $('c_oci_prefix_length').value = c.oci_prefix_length ?? 0;
+  $('c_oci_prefix_id').value = c.oci_prefix_id || '';
+  $('c_oci_config_path').value = c.oci_config_path || '';
+  $('c_oci_no_create').checked = !!c.oci_no_create;
+  $('c_api_token').value = '';
+
+  const path = payload.path || c.path || '–';
+  $('cfgPath').textContent = path === '–' ? '' : path;
+  $('cfgFilePath').textContent = path;
+  $('tokenHint').textContent = payload.token_protected
+    ? '当前已启用 Token 保护。留空表示保持不变；填写新值会立即替换。'
+    : '当前未启用 Token 保护（API 为公开状态）。建议设置一个 Token。';
+  $('proxyHttp').value = proxyURLs().http;
+  $('proxySocks').value = proxyURLs().socks;
+  applyOciTabVisibility(c.source_mode || 'pool');
+}
+
+async function loadConfig() {
+  const r = await api('/api/config');
+  fillConfig(r);
+}
+
+/* ---------------- Host egress ---------------- */
+function renderHostEgress(r) {
+  const mode = r.mode || 'system';
+  $('hostEgressMode').value = mode;
+  const vnics = Array.isArray(r.vnics) ? r.vnics : [];
+  const sel = $('hostEgressVnic');
+  const want = r.vnic_id || (vnics.find(v => v.active) || {}).vnic_id || (vnics[0] || {}).vnic_id || '';
+  sel.innerHTML = vnics.length
+    ? vnics.map(v => `<option value="${esc(v.vnic_id)}">${esc(v.interface || v.vnic_id)} · ${esc(v.subnet_cidr || '–')}${v.active ? '（代理当前）' : ''}${v.has_ipv6 ? '' : ' · 无 IPv6 地址'}</option>`).join('')
+    : '<option value="">没有已附加的 VNIC</option>';
+  if (want && vnics.some(v => v.vnic_id === want)) sel.value = want;
+  sel.disabled = mode !== 'ipv6';
+  $('hostEgressIp').value = r.ip || '';
+  $('hostEgressIp').disabled = mode !== 'ipv6';
+  renderHostEgressIPs();
+  const route = (s) => s ? esc(s) : '–';
+  $('hostEgressInfo').innerHTML =
+    `当前主机出口（内核选择）：` +
+    `<div class="mono" style="white-space:pre-wrap;line-height:1.5;margin-top:4px">` +
+    `IPv4: ${route(r.ipv4_route_get)}<br>IPv6: ${route(r.ipv6_route_get)}` +
+    `</div>` +
+    (r.gai_ipv4_forced ? '<div class="hint">已通过 /etc/gai.conf 强制 IPv4 优先</div>' : '') +
+    (r.ipv6_managed ? `<div class="hint mono">主机 IPv6 默认：${esc(r.ipv6_managed)}</div>` : '') +
+    (r.source_ipv6 ? `<div class="hint mono">实际生效源地址：${esc(r.source_ipv6)}</div>` : '') +
+    (r.ip ? `<div class="hint mono">固定源地址：${esc(r.ip)}</div>` : '');
+}
+
+// renderHostEgressIPs fills the source-address datalist with the /128s that
+// actually exist on the selected VNIC, so users can pin one without typing.
+function renderHostEgressIPs() {
+  const vnics = (state.hostEgress && Array.isArray(state.hostEgress.vnics)) ? state.hostEgress.vnics : [];
+  const v = vnics.find(x => x.vnic_id === $('hostEgressVnic').value);
+  const list = $('hostEgressIpList');
+  const addrs = (v && Array.isArray(v.addresses)) ? v.addresses : [];
+  list.innerHTML = addrs.map(ip => `<option value="${esc(ip)}"></option>`).join('');
+}
+
+async function loadHostEgress() {
+  try {
+    const r = await api('/api/host-egress');
+    state.hostEgress = r;
+    renderHostEgress(r);
+  } catch (err) {
+    $('hostEgressInfo').innerHTML = `<span class="warn">加载主机出口失败：${esc(err.message)}</span>`;
+  }
+}
+
+async function applyHostEgress() {
+  const mode = $('hostEgressMode').value;
+  const vnic = $('hostEgressVnic').value;
+  const ip = $('hostEgressIp').value.trim();
+  if (mode === 'ipv6' && !vnic) return toast('请选择主机 IPv6 出口 VNIC', 'err');
+  if (ip && !/^[0-9a-fA-F:]+$/.test(ip)) return toast('主机 IPv6 源地址格式不正确', 'err');
+  const label = { system: '保持系统默认', ipv4: '优先 IPv4', ipv6: '优先 IPv6', proxy: '跟随代理当前 VNIC 与固定 IP' }[mode] || mode;
+  if (!confirm(`应用主机出口策略「${label}」？\n\n只影响主机自身访问，不会重建代理地址池。`)) return;
+  try {
+    setBusy(true);
+    const r = await api('/api/host-egress', { method: 'POST', body: { mode, vnic_id: mode === 'ipv6' ? vnic : '', ip: mode === 'ipv6' ? ip : '' } });
+    state.hostEgress = r;
+    renderHostEgress(r);
+    toast('主机出口已更新', 'ok');
+  } catch (err) {
+    $('hostEgressInfo').innerHTML = `<span class="warn">应用主机出口失败：${esc(err.message)}</span>`;
+    toast('应用主机出口失败：' + err.message, 'err');
+  } finally { setBusy(false); }
+}
+
+/* ---------------- OCI VNIC + prefix management ---------------- */
+async function loadOCIPrefixes() {
+  const box = $('ociPrefixList');
+  const vnicBox = $('ociVnicList');
+  if (!box) return;
+  // The OCI tab only exists in source_mode=oci; skip the API call entirely
+  // otherwise so non-OCI deployments do not show OCI errors.
+  const mode = (state.status && state.status.source_mode) || (state.cfg && state.cfg.config && state.cfg.config.source_mode);
+  if (mode && mode !== 'oci') return;
+  if (!mode) {
+    const st = await api('/api/status').catch(() => null);
+    if (st) {
+      state.status = st;
+      applyOciTabVisibility(st.source_mode);
+      if (st.source_mode !== 'oci') return;
+    }
+  }
+  try {
+    const r = await api('/api/oci/prefix');
+    const current = Array.isArray(r.prefixes) ? r.prefixes : [];
+    const all = (Array.isArray(r.all_prefixes) && r.all_prefixes.length)
+      ? r.all_prefixes
+      : current.map(p => ({ ...p, vnic_id: r.active_vnic_id || '' }));
+    state.ociPrefixes = all;
+    const canSwitch = !!r.can_switch;
+    const vnics = Array.isArray(r.vnics) ? r.vnics : [];
+    const activeVnicID = r.active_vnic_id || '';
+    const activeVnic = vnics.find(v => v.vnic_id === activeVnicID) || {};
+    const activePrefixes = all.filter(p => (p.vnic_id || '') === activeVnicID);
+    const activeID = r.active_id || (activePrefixes.find(p => p.active) || {}).id || '';
+    if (!activePrefixes.some(p => p.id === state.ociPrefixPick)) {
+      state.ociPrefixPick = activeID || (activePrefixes[0] && activePrefixes[0].id) || '';
+    }
+    if (r.prefix_length) $('ociNewPrefixLen').value = r.prefix_length;
+
+    const shortID = (id) => (id || '').length > 18 ? '…' + id.slice(-14) : (id || '–');
+    const prefixItem = (p) => `<label class="oci-prefix-item">
+      <input type="radio" name="ociPrefixPick" value="${esc(p.id)}" ${p.id === state.ociPrefixPick ? 'checked' : ''}>
+      <span class="oci-prefix-text">
+        <span class="mono oci-prefix-addr">${esc(p.ip_address)}/${p.cidr_bits}</span>
+        <span class="muted oci-prefix-state">${esc(p.state || '')}${p.active ? ' · 当前池段' : ''}${p.same_64 && !p.active ? ' · 同当前 /64' : ''}${p.interface ? ' · ' + esc(p.interface) : ''}</span>
+      </span>
+    </label>`;
+
+    // VNIC list: create / switch / delete only. Prefix editing is below.
+    if (vnicBox) {
+      if (r.error && !vnics.length) {
+        vnicBox.innerHTML = `<div class="warn">${esc(r.error)}</div>`;
+      } else if (!vnics.length) {
+        vnicBox.innerHTML = '<div class="muted">还没有已附加的 VNIC。</div>';
+      } else {
+        vnicBox.innerHTML = vnics.map(v => {
+          const count = all.filter(p => (p.vnic_id || '') === v.vnic_id).length;
+          const actions = v.active ? '' : `<div class="oci-vnic-actions">
+            <button type="button" class="sm" data-act="switch" data-vnic="${esc(v.vnic_id)}">切换</button>
+            <button type="button" class="sm ghost oci-delete" data-act="delete" data-vnic="${esc(v.vnic_id)}">删除</button>
+          </div>`;
+          return `<div class="oci-vnic-row${v.active ? ' active' : ''}">
+            <div class="oci-vnic-info">
+              <div class="oci-vnic-head">
+                <span class="mono">${esc(shortID(v.vnic_id))}</span>
+                ${v.interface ? `<span class="muted"> · ${esc(v.interface)}</span>` : ''}
+                ${v.subnet_cidr ? `<span class="muted"> · ${esc(v.subnet_cidr)}</span>` : ''}
+                ${v.active ? '<span class="oci-badge">当前 VNIC</span>' : ''}
+              </div>
+              <div class="muted oci-vnic-meta">${count} 个前缀段${v.mac ? ' · MAC ' + esc(v.mac) : ''}${v.error ? ' · ' + esc(v.error) : ''}</div>
+            </div>${actions}
+          </div>`;
+        }).join('');
+        vnicBox.querySelectorAll('button[data-act]').forEach(el => {
+          el.disabled = !canSwitch;
+          el.onclick = () => el.dataset.act === 'switch'
+            ? switchOCIVnic(el.dataset.vnic)
+            : deleteOCIVnic(el.dataset.vnic);
+        });
+      }
+    }
+
+    $('ociActiveVnicHint').innerHTML = activeVnicID
+      ? `当前 VNIC：<span class="mono">${esc(shortID(activeVnicID))}</span>` +
+        (activeVnic.interface ? ` · 接口 <span class="mono">${esc(activeVnic.interface)}</span>` : '') +
+        (activeVnic.subnet_cidr ? ` · ${esc(activeVnic.subnet_cidr)}` : '') +
+        ` · 池段 <span class="mono">${esc(r.active_prefix || '–')}</span>`
+      : (r.source_mode === 'oci'
+          ? '尚未解析到当前 VNIC。'
+          : `当前 source_mode=${esc(r.source_mode || '–')}，切换到 oci 后才能管理 OCI 前缀。`);
+
+    if (r.error && !all.length) {
+      box.innerHTML = `<div class="warn">${esc(r.error)}</div>`;
+    } else if (!activeVnicID) {
+      box.innerHTML = '<div class="muted">切换 VNIC 后才能编辑 IPv6 前缀。</div>';
+    } else if (!activePrefixes.length) {
+      box.innerHTML = '<div class="muted">当前 VNIC 还没有前缀段；可在下方新建一个（推荐 /112）。</div>';
+    } else {
+      box.innerHTML = activePrefixes.map(prefixItem).join('');
+      box.querySelectorAll('input[name="ociPrefixPick"]').forEach(el => {
+        el.onchange = () => { state.ociPrefixPick = el.value; };
+      });
+    }
+
+    const newVnicBtn = $('btnOciNewVnic');
+    if (newVnicBtn) newVnicBtn.disabled = !canSwitch || !r.can_create_vnic;
+    $('btnOciUsePrefix').disabled = !canSwitch || !state.ociPrefixPick;
+    $('btnOciRotatePrefix').disabled = !canSwitch || !r.can_rotate;
+    $('ociDeleteOld').disabled = !canSwitch;
+    if (!canSwitch) {
+      $('ociVnicMsg').textContent = '仅 source_mode=oci 支持管理 OCI VNIC。';
+      $('ociPrefixMsg').textContent = '仅 source_mode=oci 支持切换 OCI 前缀。';
+    } else if (!r.can_create_vnic) {
+      $('ociVnicMsg').textContent = r.can_rotate
+        ? '实例已有 2 个 VNIC，请先删除旧的非主 VNIC 才能再新建。'
+        : '当前 oci_no_create=true，禁止新建 VNIC。';
+    }
+    if (canSwitch && !r.can_rotate) {
+      $('ociPrefixMsg').textContent = '当前 oci_no_create=true，只能切换到已有前缀；新建前缀请先取消该选项。';
+    }
+  } catch (err) {
+    box.innerHTML = `<span class="warn">加载 OCI 前缀失败：${esc(err.message)}</span>`;
+    if (vnicBox) vnicBox.innerHTML = `<span class="warn">加载 OCI VNIC 失败：${esc(err.message)}</span>`;
+  }
+}
+
+function ociSwitchConfirm(label, deleteOld) {
+  let msg = `确认${label}？\n\n切换会重建地址池并热加载代理。`;
+  if (deleteOld) msg += '\n\n切换成功后将删除旧前缀对象，此操作无法恢复。';
+  return confirm(msg);
+}
+
+async function switchOCIVnic(vnicID) {
+  if (!vnicID) return;
+  const len = Number($('ociNewPrefixLen').value);
+  const hasPrefix = (state.ociPrefixes || []).some(x => x.vnic_id === vnicID && (!x.state || x.state === 'AVAILABLE'));
+  if (!hasPrefix && (!Number.isInteger(len) || len < 80 || len > 128 || len % 4 !== 0)) {
+    return toast('该 VNIC 还没有前缀，前缀长度必须是 80-128 且为 4 的倍数', 'err');
+  }
+  const deleteOld = $('ociDeleteOld').checked;
+  const msg = hasPrefix
+    ? `确认切换到该 VNIC？\n\n会复用该 VNIC 上已有的前缀段并重建地址池。`
+    : `确认切换到该 VNIC？\n\n该 VNIC 还没有前缀段，将在它的 /64 内新建一个 /${len} 前缀，然后重建地址池。`;
+  if (!confirm(msg)) return;
+  if (deleteOld && !confirm('再次确认：删除旧 OCI 前缀对象后无法恢复。继续？')) return;
+  try {
+    setBusy(true);
+    $('ociVnicMsg').textContent = '正在切换到目标 VNIC…';
+    const body = { action: 'switch_vnic', vnic_id: vnicID, delete_old: deleteOld };
+    if (!hasPrefix) body.prefix_length = len;
+    const r = await api('/api/oci/prefix', { method: 'POST', body });
+    const warn = r.warnings || [];
+    $('ociVnicMsg').innerHTML = `已切换 VNIC` +
+      (r.subnet_cidr ? ` 到 <span class="mono">${esc(r.subnet_cidr)}</span>` : '') +
+      (r.interface ? `，接口 <span class="mono">${esc(r.interface)}</span>` : '') +
+      `，池段 <span class="mono">${esc(r.prefix)}</span>` +
+      (r.created ? '（新建前缀）' : '') +
+      (r.deleted_old ? '，旧前缀对象已删除' : '') +
+      (warn.length ? `<div class="warn">${warn.map(esc).join('<br>')}</div>` : '');
+    toast(`已切换 VNIC：${r.subnet_cidr || r.prefix}`, 'ok');
+    if (r.prefix_id) state.ociPrefixPick = r.prefix_id;
+    await Promise.all([loadStatus(), loadIPs(), loadConfig(), loadOCIPrefixes(), loadHostEgress()]);
+  } catch (err) {
+    $('ociVnicMsg').innerHTML = `<span class="warn">切换 VNIC 失败：${esc(err.message)}</span>`;
+    toast('切换 VNIC 失败：' + err.message, 'err');
+  } finally { setBusy(false); }
+}
+
+async function useOCIPrefix() {
+  const id = state.ociPrefixPick;
+  if (!id) return toast('请先选择一个前缀', 'err');
+  const p = (state.ociPrefixes || []).find(x => x.id === id) || {};
+  const deleteOld = $('ociDeleteOld').checked;
+  if (!ociSwitchConfirm(`切换到 ${p.ip_address || id}/${p.cidr_bits || ''}`, deleteOld)) return;
+  if (deleteOld && !confirm('再次确认：删除旧 OCI 前缀对象后无法恢复。继续？')) return;
+  try {
+    setBusy(true);
+    $('ociPrefixMsg').textContent = '正在切换 OCI 前缀…';
+    const body = { action: 'use', id, delete_old: deleteOld };
+    if (p.vnic_id) body.vnic_id = p.vnic_id;
+    const r = await api('/api/oci/prefix', { method: 'POST', body });
+    const warn = r.warnings || [];
+    $('ociPrefixMsg').innerHTML = `已切换到 <span class="mono">${esc(r.prefix)}</span>` +
+      (r.deleted_old ? '，旧前缀对象已删除' : '') +
+      (warn.length ? `<div class="warn">${warn.map(esc).join('<br>')}</div>` : '');
+    toast(`已切换 OCI 前缀：${r.prefix}`, 'ok');
+    if (r.prefix_id) state.ociPrefixPick = r.prefix_id;
+    await Promise.all([loadStatus(), loadIPs(), loadConfig(), loadOCIPrefixes(), loadHostEgress()]);
+  } catch (err) {
+    $('ociPrefixMsg').innerHTML = `<span class="warn">切换失败：${esc(err.message)}</span>`;
+    toast('切换失败：' + err.message, 'err');
+  } finally { setBusy(false); }
+}
+
+async function rotateOCIPrefix() {
+  const len = Number($('ociNewPrefixLen').value);
+  if (!Number.isInteger(len) || len < 80 || len > 128 || len % 4 !== 0) {
+    return toast('前缀长度必须是 80-128 且为 4 的倍数', 'err');
+  }
+  const deleteOld = $('ociDeleteOld').checked;
+  if (!ociSwitchConfirm(`新建并切换到 /${len} 前缀`, deleteOld)) return;
+  if (deleteOld && !confirm('再次确认：删除旧 OCI 前缀对象后无法恢复。继续？')) return;
+  try {
+    setBusy(true);
+    $('ociPrefixMsg').textContent = '正在向 OCI 申请新前缀并切换…';
+    const body = { action: 'rotate', prefix_length: len, delete_old: deleteOld };
+    const picked = (state.ociPrefixes || []).find(x => x.id === state.ociPrefixPick);
+    if (picked && picked.vnic_id) body.vnic_id = picked.vnic_id;
+    const r = await api('/api/oci/prefix', { method: 'POST', body });
+    const warn = r.warnings || [];
+    $('ociPrefixMsg').innerHTML = `已新建并切换到 <span class="mono">${esc(r.prefix)}</span>` +
+      (r.deleted_old ? '，旧前缀对象已删除' : '') +
+      (warn.length ? `<div class="warn">${warn.map(esc).join('<br>')}</div>` : '');
+    toast(`已切换 OCI 前缀：${r.prefix}`, 'ok');
+    if (r.prefix_id) state.ociPrefixPick = r.prefix_id;
+    await Promise.all([loadStatus(), loadIPs(), loadConfig(), loadOCIPrefixes(), loadHostEgress()]);
+  } catch (err) {
+    $('ociPrefixMsg').innerHTML = `<span class="warn">切换失败：${esc(err.message)}</span>`;
+    toast('切换失败：' + err.message, 'err');
+  } finally { setBusy(false); }
+}
+
+async function createOCIVnic() {
+  if (!confirm('确认新建 VNIC？\n\n会创建一个新的 /64 子网并附加新 VNIC，但不会切换，也不会创建 IPv6 前缀。\n创建成功后，请在 VNIC 列表中点「切换」，再到下方编辑 IPv6 前缀。')) return;
+  try {
+    setBusy(true);
+    $('ociVnicMsg').textContent = '正在创建子网和 VNIC（可能需要约 1 分钟）…';
+    const r = await api('/api/oci/prefix', { method: 'POST', body: { action: 'new_vnic' } });
+    $('ociVnicMsg').innerHTML = `已新建 VNIC` +
+      (r.interface ? `，接口 <span class="mono">${esc(r.interface)}</span>` : '') +
+      (r.subnet_cidr ? `，子网 <span class="mono">${esc(r.subnet_cidr)}</span>` : '') +
+      `。请点「切换」后再编辑 IPv6 前缀。`;
+    toast('已新建 VNIC', 'ok');
+    await Promise.all([loadOCIPrefixes(), loadHostEgress()]);
+  } catch (err) {
+    $('ociVnicMsg').innerHTML = `<span class="warn">新建 VNIC 失败：${esc(err.message)}</span>`;
+    toast('新建 VNIC 失败：' + err.message, 'err');
+  } finally { setBusy(false); }
+}
+
+async function deleteOCIVnic(vnicID) {
+  if (!vnicID) return;
+  const shortID = vnicID.length > 18 ? '…' + vnicID.slice(-14) : vnicID;
+  if (!confirm(`确认删除 VNIC ${shortID}？\n\n会先分离该 VNIC，再删除它的子网和 /64。此操作无法恢复。`)) return;
+  if (!confirm('再次确认：删除 VNIC 和子网后无法恢复。继续？')) return;
+  try {
+    setBusy(true);
+    $('ociVnicMsg').textContent = '正在分离 VNIC 并删除子网…';
+    const r = await api('/api/oci/prefix', { method: 'POST', body: { action: 'delete_vnic', vnic_id: vnicID } });
+    const warn = r.warnings || [];
+    $('ociVnicMsg').innerHTML = `已删除 VNIC <span class="mono">${esc(shortID)}</span>` +
+      (warn.length ? `<div class="warn">${warn.map(esc).join('<br>')}</div>` : '');
+    toast('已删除 VNIC', 'ok');
+    await Promise.all([loadOCIPrefixes(), loadHostEgress()]);
+  } catch (err) {
+    $('ociVnicMsg').innerHTML = `<span class="warn">删除 VNIC 失败：${esc(err.message)}</span>`;
+    toast('删除 VNIC 失败：' + err.message, 'err');
+  } finally { setBusy(false); }
+}
+
+async function saveConfig(e) {
+  e.preventDefault();
+  await submitConfig(false);
+}
+
+async function saveOciConfig() {
+  await submitConfig(true);
+}
+
+async function submitConfig(ociOnly) {
+  const num = (id) => Number($(id).value);
+  const payload = ociOnly ? {
+    oci_compartment: $('c_oci_compartment').value.trim(),
+    oci_vnic_id: $('c_oci_vnic_id').value.trim(),
+    oci_prefix_length: num('c_oci_prefix_length'),
+    oci_config_path: $('c_oci_config_path').value.trim(),
+    oci_no_create: $('c_oci_no_create').checked
+  } : {
+    proxy_addr: $('c_proxy_addr').value.trim(),
+    api_addr: $('c_api_addr').value.trim(),
+    prefix: $('c_prefix').value.trim(),
+    source_mode: $('c_source_mode').value,
+    selection_mode: $('c_selection_mode').value,
+    dummy_iface: $('c_dummy_iface').value.trim(),
+    dns_server: $('c_dns_server').value.trim(),
+    test_target: $('c_test_target').value.trim(),
+    subnet_count: num('c_subnet_count'),
+    slaac_pool_size: num('c_slaac_pool_size'),
+    health_interval_sec: num('c_health_interval_sec'),
+    connect_timeout_sec: num('c_connect_timeout_sec'),
+    max_retries: num('c_max_retries'),
+    failure_threshold: num('c_failure_threshold'),
+    oci_compartment: $('c_oci_compartment').value.trim(),
+    oci_vnic_id: $('c_oci_vnic_id').value.trim(),
+    oci_prefix_length: num('c_oci_prefix_length'),
+    oci_config_path: $('c_oci_config_path').value.trim(),
+    oci_no_create: $('c_oci_no_create').checked
+  };
+  const tok = ociOnly ? '' : $('c_api_token').value.trim();
+  if (tok) payload.api_token = tok;
+  try {
+    setBusy(true);
+    const r = await api('/api/config', { method: 'POST', body: payload });
+    fillConfig(r);
+    const restart = r.restart_required || [];
+    toast(restart.length
+      ? `配置已保存；需重启生效：${restart.join('、')}`
+      : `配置已保存并已热加载（已应用 ${(r.applied || []).length} 项）`, 'ok');
+    if (r.applied && r.applied.includes('api_token')) {
+      state.token = tok;
+      localStorage.setItem('v6proxy_token', tok);
+    }
+    await Promise.all([loadStatus(), loadOCIPrefixes(), loadHostEgress()]);
+  } catch (err) {
+    toast('保存失败：' + err.message, 'err');
+  } finally { setBusy(false); }
+}
+
+/* ---------------- logs ---------------- */
+async function loadLogs() {
+  const n = Number($('logLines').value) || 200;
+  const r = await api('/api/logs?lines=' + n);
+  const box = $('logBox');
+  const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 30;
+  box.innerHTML = (r.lines || []).map((line) => {
+    const cls = /error|failed|fatal|panic/i.test(line) ? 'err'
+      : /warn|timeout|retry/i.test(line) ? 'warn' : '';
+    return `<span class="logline ${cls}">${esc(line)}</span>`;
+  }).join('');
+  if (atBottom) box.scrollTop = box.scrollHeight;
+}
+
+async function clearLogs() {
+  if (!confirm('确认清空日志缓冲？\n\n只清除控制台内存中保留的日志，不会删除磁盘上的日志文件或服务端 journald 记录。')) return;
+  try {
+    await api('/api/logs', { method: 'DELETE' });
+    $('logBox').innerHTML = '';
+    await loadLogs();
+    toast('日志已清空', 'ok');
+  } catch (err) { toast('清空失败：' + err.message, 'err'); }
+}
+
+/* ---------------- cleanup ---------------- */
+async function loadCleanup() {
+  const r = await api('/api/cleanup');
+  const p = r.preview || {};
+  const d = p.dummy || {};
+
+  $('clDummyName').textContent = d.name || '–';
+  $('clDummyName').className = 'v mono ' + (d.exists && !d.is_dummy ? 'bad' : '');
+  let dummyText = '不存在';
+  let dummyBadgeCls = 'checking';
+  if (d.exists && !d.is_dummy) {
+    dummyText = '存在，但不是 dummy 类型';
+    dummyBadgeCls = 'dead';
+  } else if (d.exists && d.in_use) {
+    dummyText = '存在 · 正在承载地址池';
+    dummyBadgeCls = 'alive';
+  } else if (d.exists) {
+    dummyText = '存在 · 残留，可清理';
+    dummyBadgeCls = 'checking';
+  }
+  $('clDummyState').textContent = dummyText;
+  const db = $('clDummyBadge');
+  db.textContent = d.name || '–';
+  db.className = 'badge ' + dummyBadgeCls;
+
+  const stale = p.stale_addresses || [];
+  $('clPoolCount').textContent = p.pool_addresses ?? 0;
+  $('clPoolPrefix').textContent = p.pool_prefix || '–';
+  $('clStaleCount').textContent = stale.length;
+  $('clStaleCount').className = 'v ' + (stale.length ? 'warn' : 'ok');
+  const ociMode = p.stale_mode === 'oci';
+  $('clSourceIface').textContent = p.stale_interface
+    ? (ociMode ? '源网卡：' + p.stale_interface + '（OCI 托管地址不参与）' : '虚拟网卡：' + p.stale_interface)
+    : (p.stale_error || '虚拟网卡不存在（源网卡 ' + (p.source_interface || '–') + ' 不参与残留清理）');
+  const staleHint = $('clStaleHint');
+  staleHint.textContent = ociMode
+    ? '删除源网卡上未入池、且不属于 OCI 托管对象的静态 /128 遗留地址。OCI 分配的 /128、SLAAC 动态地址和其他前缀段都会跳过。'
+    : '删除虚拟网卡上属于地址池前缀、但已不在池内的遗留地址。动态 / 临时 / noprefixroute 等系统地址会被跳过。';
+  $('clStaleBadge').textContent = stale.length;
+  $('clStaleBadge').className = 'badge ' + (stale.length ? 'checking' : 'alive');
+  $('clStaleList').innerHTML = stale.length
+    ? stale.slice(0, 20).map(esc).join('<br>') + (stale.length > 20 ? `<br>… 另有 ${stale.length - 20} 个` : '')
+    : '';
+  $('cl_opt_stale').disabled = !p.stale_interface;
+  if (!p.stale_interface || !stale.length) $('cl_opt_stale').checked = false;
+
+  // OCI objects: only unused, non-dynamic /128 may be selected for deletion.
+  const ociObjects = p.oci_objects || [];
+  state.ociSelected = new Set();
+  const deletable = ociObjects.filter(o => o.cidr_bits === 0 && !o.in_pool && !o.dynamic);
+  const ociItem = $('cl_oci_item');
+  ociItem.style.display = ociObjects.length ? 'flex' : 'none';
+  $('clOciBadge').textContent = deletable.length;
+  $('clOciBadge').className = 'badge ' + (deletable.length ? 'checking' : 'alive');
+  $('clOciList').innerHTML = ociObjects.length
+    ? ociObjects.map(o => {
+        const type = o.cidr_bits > 0 ? `前缀 /${o.cidr_bits}` : '/128';
+        const tags = [type, o.state || '', o.active ? '当前池段' : '', o.in_pool ? '池内' : '', o.dynamic ? '系统' : '', o.on_kernel ? '已下发' : '']
+          .filter(Boolean).join(' · ');
+        if (o.cidr_bits === 0 && !o.in_pool && !o.dynamic) {
+          return `<label style="display:flex;gap:8px;align-items:center;margin:3px 0">
+            <input type="checkbox" class="cl-oci" value="${esc(o.id)}">
+            <span>${esc(o.ip_address)} <span class="muted">${esc(tags)}</span></span></label>`;
+        }
+        return `<div style="margin:3px 0">${esc(o.ip_address)} <span class="muted">${esc(tags)} · 受保护</span></div>`;
+      }).join('')
+    : '';
+  document.querySelectorAll('.cl-oci').forEach(el => {
+    el.onchange = () => {
+      if (el.checked) state.ociSelected.add(el.value);
+      else state.ociSelected.delete(el.value);
+    };
+  });
+
+  $('clRouteCount').textContent = (p.policy_rules ?? 0) + ' 条规则';
+  $('clRouteDetail').textContent = `table ${p.policy_table ?? '–'} · ${p.table_routes ?? 0} 条路由`;
+  $('clRouteBadge').textContent = `table ${p.policy_table ?? '–'}`;
+
+  const dummyOpt = $('cl_opt_dummy');
+  const addrOpt = $('cl_opt_addresses');
+  const updateDummyOption = () => {
+    const allowed = !!d.exists && !!d.is_dummy && (!d.in_use || addrOpt.checked);
+    dummyOpt.disabled = !allowed;
+    dummyOpt.checked = allowed;
+    if (!d.exists) {
+      $('clDummyHint').textContent = '虚拟网卡不存在，无需删除。';
+    } else if (!d.is_dummy) {
+      $('clDummyHint').textContent = '该接口不是 dummy 类型，出于安全考虑拒绝删除。';
+    } else if (d.in_use && !addrOpt.checked) {
+      $('clDummyHint').textContent = '正在承载地址池。勾选「清空池内地址」后可一并删除，删除后需重启进程恢复代理。';
+    } else if (d.in_use) {
+      $('clDummyHint').textContent = '将随池内地址一起删除；当前实例会失去源网卡，需重启进程恢复。';
+    } else {
+      $('clDummyHint').textContent = '删除后才生效于下次启动；当前实例不会重新创建它。';
+    }
+  };
+  addrOpt.onchange = updateDummyOption;
+  updateDummyOption();
+}
+
+async function runCleanup() {
+  const opts = {
+    stale: $('cl_opt_stale').checked,
+    routes: $('cl_opt_routes').checked,
+    dummy: $('cl_opt_dummy').checked,
+    addresses: $('cl_opt_addresses').checked,
+    keep: 0,
+    delete_oci: Array.from(state.ociSelected || [])
+  };
+  if (opts.addresses) {
+    opts.keep = Number($('cl_keep').value || 0);
+    if (isNaN(opts.keep) || opts.keep < 0) return toast('保留数量无效', 'err');
+  }
+  if (!opts.stale && !opts.routes && !opts.dummy && !opts.addresses && !opts.delete_oci.length) {
+    return toast('请至少选择一项清理内容', 'err');
+  }
+  const lines = [];
+  if (opts.addresses) {
+    lines.push(opts.keep > 0
+      ? `删除池内地址，仅保留 ${opts.keep} 个（slaac_pool_size 同步为 ${opts.keep}）`
+      : '清空池内全部地址（代理将暂时不可用）');
+  }
+  if (opts.stale) lines.push('删除残留 /128 地址');
+  if (opts.delete_oci.length) lines.push(`删除 ${opts.delete_oci.length} 个 OCI /128 对象`);
+  if (opts.routes) lines.push('删除策略路由规则并清空路由表');
+  if (opts.dummy) lines.push('删除虚拟网卡');
+  if (!confirm('确认执行以下清理？\n\n· ' + lines.join('\n· '))) return;
+  if (opts.addresses && opts.keep === 0 && !confirm('再次确认：清空池内地址后，现有代理会立即失去源地址，直到重新生成。继续？')) return;
+  if (opts.delete_oci.length && !confirm('再次确认：删除 OCI IPv6 对象后无法恢复（可重新创建），继续？')) return;
+
+  try {
+    setBusy(true);
+    const r = await api('/api/cleanup', { method: 'POST', body: opts });
+    const res = r.result || {};
+    const parts = [];
+    if (res.removed_addresses) parts.push(`池内地址 ${res.removed_addresses} 个`);
+    if (res.kept_addresses && res.kept_addresses.length) parts.push(`保留 ${res.kept_addresses.length} 个`);
+    if (res.removed_stale && res.removed_stale.length) parts.push(`残留地址 ${res.removed_stale.length} 个`);
+    if (res.removed_oci && res.removed_oci.length) parts.push(`OCI 对象 ${res.removed_oci.length} 个`);
+    if (res.rules_removed) parts.push(`规则 ${res.rules_removed} 条`);
+    if (res.routes_flushed) parts.push('路由表已清空');
+    if (res.dummy_removed) parts.push(`网卡 ${res.dummy_removed} 已删除`);
+    const warn = res.warnings || [];
+    $('clLastResult').textContent = parts.length ? '已清理：' + parts.join(' · ') : '没有需要清理的内容';
+    toast(parts.length ? '清理完成：' + parts.join(' · ') : '清理完成', 'ok');
+    if (warn.length) {
+      $('clLastResult').textContent += '；注意：' + warn.join('；');
+      toast('清理完成，但有提示：' + warn[0], 'err');
+    }
+    await Promise.all([loadStatus(), loadIPs(), loadCleanup()]);
+  } catch (err) {
+    toast('清理失败：' + err.message, 'err');
+  } finally { setBusy(false); }
+}
+
+/* ---------------- actions ---------------- */
+function setBusy(b) {
+  state.busy = b;
+  const btns = ['btnNext','btnNextCheck','btnEgress','btnHealth','btnGenerate','btnAddIp','btnAddHost','btnCleanupRun','btnOciUsePrefix','btnOciRotatePrefix','btnOciNewVnic','btnOciPrefixRefresh','btnHostEgressApply'];
+  btns.forEach((id) => { const el = $(id); if (el) el.disabled = b; });
+}
+
+// runEgressCheck obtains the exit IP by asking the local proxy to fetch
+// api64.ipify.org. When an expected address is given, the request carries
+// X-Source-IPv6 so the check verifies that specific address, not just "some"
+// pool member.
+async function runEgressCheck(expected) {
+  const el = $('egressResult');
+  el.innerHTML = '出口检测中…';
+  try {
+    setBusy(true);
+    const q = expected ? '?ip=' + encodeURIComponent(expected) : '';
+    const r = await api('/api/egress-check' + q);
+    const match = r.match === true ? ' <span class="badge alive">一致</span>'
+      : (r.match === false ? ' <span class="badge dead">不一致</span>' : '');
+    el.innerHTML = `出口 IP：<span class="mono">${esc(r.ip)}</span>${match}` +
+      `<span class="muted small"> · 经 ${esc(r.proxy)} · ${r.elapsed_ms} ms</span>`;
+    if (r.match === false) toast('出口 IP 与当前地址不一致：' + r.ip, 'err');
+    else toast('出口 IP：' + r.ip, 'ok');
+  } catch (err) {
+    el.textContent = '出口检测失败：' + err.message;
+    toast('出口检测失败：' + err.message, 'err');
+  } finally { setBusy(false); }
+}
+
+async function refreshActive() {
+  try {
+    if (state.tab === 'overview') {
+      await loadStatus();
+    } else if (state.tab === 'pool') {
+      await Promise.all([loadStatus(), loadIPs()]);
+    } else if (state.tab === 'hosts') {
+      await loadHosts();
+    } else if (state.tab === 'settings') {
+      if (!state.cfg) await loadConfig();
+      await loadHostEgress();
+    } else if (state.tab === 'oci') {
+      await loadOCIPrefixes();
+    } else if (state.tab === 'cleanup') {
+      await loadCleanup();
+    } else if (state.tab === 'logs') {
+      if (state.logAuto) await loadLogs();
+    }
+  } catch (err) {
+    setConn('bad', err.message || '连接失败');
+    if (!/Token/.test(err.message)) console.warn(err);
+  }
+}
+
+function switchTab(name) {
+  state.tab = name;
+  document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === name));
+  document.querySelectorAll('.panel').forEach((p) => p.classList.toggle('active', p.id === 'panel-' + name));
+  refreshActive();
+}
+
+function setup() {
+  document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => switchTab(t.dataset.tab)));
+
+  $('refreshBtn').addEventListener('click', refreshActive);
+
+  $('tokenSave').addEventListener('click', async () => {
+    state.token = $('tokenInput').value.trim();
+    localStorage.setItem('v6proxy_token', state.token);
+    showAuth(false);
+    toast('Token 已保存', 'ok');
+    await refreshActive();
+  });
+  $('tokenInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('tokenSave').click(); });
+  $('tokenClear').addEventListener('click', () => {
+    state.token = '';
+    localStorage.removeItem('v6proxy_token');
+    $('tokenInput').value = '';
+    toast('Token 已清除');
+  });
+
+  document.querySelectorAll('[data-copy]').forEach((b) => b.addEventListener('click', async () => {
+    const el = $(b.dataset.copy);
+    try {
+      await navigator.clipboard.writeText(el.value);
+      toast('已复制：' + el.value, 'ok');
+    } catch (e) {
+      el.select(); document.execCommand('copy'); toast('已复制', 'ok');
+    }
+  }));
+
+  $('autoRefresh').addEventListener('change', (e) => { state.auto = e.target.checked; });
+
+  $('btnNext').addEventListener('click', async () => {
+    try {
+      setBusy(true);
+      const r = await api('/api/select?next', { method: 'POST' });
+      toast(r.switched_to ? '已切换到 ' + r.switched_to : '已切换', 'ok');
+      await Promise.all([loadStatus(), loadIPs()]);
+    } catch (err) { toast('切换失败：' + err.message, 'err'); }
+    finally { setBusy(false); }
+  });
+
+  $('btnEgress').addEventListener('click', () => runEgressCheck());
+
+  $('btnNextCheck').addEventListener('click', async () => {
+    try {
+      setBusy(true);
+      const r = await api('/api/select?next', { method: 'POST' });
+      toast(r.switched_to ? '已切换到 ' + r.switched_to : '已切换', 'ok');
+      await Promise.all([loadStatus(), loadIPs()]);
+      await runEgressCheck(r.switched_to || (state.status && state.status.pinned));
+    } catch (err) { toast('切换失败：' + err.message, 'err'); }
+    finally { setBusy(false); }
+  });
+
+  $('btnHealth').addEventListener('click', async () => {
+    try {
+      setBusy(true);
+      await api('/api/healthcheck', { method: 'POST' });
+      toast('健康检查已启动，稍后自动刷新结果', 'ok');
+      setTimeout(refreshActive, 1500);
+    } catch (err) { toast('启动失败：' + err.message, 'err'); }
+    finally { setBusy(false); }
+  });
+
+  $('btnGenerate').addEventListener('click', async () => {
+    const n = Number($('genCount').value) || 10;
+    try {
+      setBusy(true);
+      toast(`正在生成并测试 ${n} 个地址…`);
+      const r = await api('/api/generate?count=' + n, { method: 'POST' });
+      toast(`生成 ${r.count} 个，可用 ${r.alive} 个`, r.alive > 0 ? 'ok' : 'err');
+      await Promise.all([loadStatus(), loadIPs()]);
+      switchTab('pool');
+    } catch (err) { toast('生成失败：' + err.message, 'err'); }
+    finally { setBusy(false); }
+  });
+
+  $('btnAddIp').addEventListener('click', async () => {
+    const ip = $('addIp').value.trim();
+    if (!ip) return toast('请输入 IPv6 地址', 'err');
+    try {
+      setBusy(true);
+      await api('/api/addresses', { method: 'POST', body: { ip } });
+      $('addIp').value = '';
+      toast('已添加，正在探测', 'ok');
+      await loadIPs();
+    } catch (err) { toast('添加失败：' + err.message, 'err'); }
+    finally { setBusy(false); }
+  });
+
+  $('poolBody').addEventListener('click', async (e) => {
+    const btn = e.target.closest('button[data-act]');
+    if (!btn) return;
+    const ip = btn.dataset.ip;
+    const act = btn.dataset.act;
+    try {
+      btn.disabled = true;
+      if (act === 'pin') {
+        await api('/api/select?ip=' + encodeURIComponent(ip), { method: 'POST' });
+        toast('已固定 ' + ip, 'ok');
+      } else if (act === 'test') {
+        await api('/api/addresses/test', { method: 'POST', body: { ip } });
+        toast('已开始重测 ' + ip, 'ok');
+      } else if (act === 'del') {
+        if (!confirm('从池中删除 ' + ip + ' ？')) { btn.disabled = false; return; }
+        await api('/api/addresses?ip=' + encodeURIComponent(ip), { method: 'DELETE' });
+        toast('已删除 ' + ip, 'ok');
+      }
+      await Promise.all([loadStatus(), loadIPs()]);
+    } catch (err) {
+      toast('操作失败：' + err.message, 'err');
+      btn.disabled = false;
+    }
+  });
+
+  $('btnAddHost').addEventListener('click', async () => {
+    const host = $('hostName').value.trim();
+    const target = $('hostTarget').value.trim();
+    if (!host || !target) return toast('域名和目标都要填写', 'err');
+    try {
+      setBusy(true);
+      const r = await api('/api/hosts', { method: 'POST', body: { host, target } });
+      renderHosts(r.hosts);
+      $('hostName').value = ''; $('hostTarget').value = '';
+      toast('映射已保存', 'ok');
+    } catch (err) { toast('保存失败：' + err.message, 'err'); }
+    finally { setBusy(false); }
+  });
+
+  $('hostsBody').addEventListener('click', async (e) => {
+    const btn = e.target.closest('button[data-delhost]');
+    if (!btn) return;
+    const host = btn.dataset.delhost;
+    if (!confirm('删除映射 ' + host + ' ？')) return;
+    try {
+      const r = await api('/api/hosts?host=' + encodeURIComponent(host), { method: 'DELETE' });
+      renderHosts(r.hosts);
+      toast('已删除', 'ok');
+    } catch (err) { toast('删除失败：' + err.message, 'err'); }
+  });
+
+  $('cfgForm').addEventListener('submit', saveConfig);
+  $('btnReloadCfg').addEventListener('click', async () => {
+    try { await loadConfig(); toast('已重新载入', 'ok'); }
+    catch (err) { toast('载入失败：' + err.message, 'err'); }
+  });
+
+  $('btnLogRefresh').addEventListener('click', loadLogs);
+  $('btnLogClear').addEventListener('click', clearLogs);
+  $('logAuto').addEventListener('change', (e) => { state.logAuto = e.target.checked; });
+  $('logLines').addEventListener('change', loadLogs);
+
+  $('btnCleanupPreview').addEventListener('click', async () => {
+    try { await loadCleanup(); toast('预览已刷新', 'ok'); }
+    catch (err) { toast('刷新失败：' + err.message, 'err'); }
+  });
+  const keepInput = $('cl_keep');
+  keepInput.addEventListener('input', () => {
+    const n = Number(keepInput.value || 0);
+    $('clKeepHint').textContent = n > 0 ? `保留 ${n} 个（优先固定/可用）` : '0 = 全部删除';
+  });
+  $('btnCleanupRun').addEventListener('click', runCleanup);
+
+  $('btnSaveOciCfg').addEventListener('click', saveOciConfig);
+  $('btnOciPrefixRefresh').addEventListener('click', async () => {
+    try { await loadOCIPrefixes(); toast('OCI 前缀列表已刷新', 'ok'); }
+    catch (err) { toast('刷新失败：' + err.message, 'err'); }
+  });
+  $('btnOciUsePrefix').addEventListener('click', useOCIPrefix);
+  $('btnOciRotatePrefix').addEventListener('click', rotateOCIPrefix);
+  $('btnOciNewVnic').addEventListener('click', createOCIVnic);
+  $('btnHostEgressApply').addEventListener('click', applyHostEgress);
+  $('hostEgressMode').addEventListener('change', () => {
+    const ipv6 = $('hostEgressMode').value === 'ipv6';
+    $('hostEgressVnic').disabled = !ipv6;
+    $('hostEgressIp').disabled = !ipv6;
+  });
+  $('hostEgressVnic').addEventListener('change', renderHostEgressIPs);
+
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) refreshActive();
+  });
+
+  setInterval(() => {
+    if (document.hidden || !state.auto) return;
+    if (state.tab === 'overview' || state.tab === 'pool') refreshActive();
+  }, 5000);
+
+  setInterval(() => {
+    if (document.hidden || state.tab !== 'logs' || !state.logAuto) return;
+    loadLogs().catch(() => {});
+  }, 3000);
+
+  refreshActive();
+  loadConfig().catch(() => {});
+}
+
+window.addEventListener('DOMContentLoaded', setup);
+</script>
+</body>
+</html>
